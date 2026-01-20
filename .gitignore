@@ -1,0 +1,15 @@
+# Arquivos de estado do Terraform
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+
+# Pasta de plugins
+.terraform/
+
+# Arquivos de log e crash
+*.log
+.terraform.lock.hcl
+
+# Segredos e variáveis locais
+.env
