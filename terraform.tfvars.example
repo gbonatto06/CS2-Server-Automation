@@ -1,0 +1,12 @@
+# Região da AWS que o servidor vai ser hosteado, use por ex: sa-east-1, servidor no brasil = menor latência
+aws_region = "sa-east-1"
+
+# Tipo de instância, t3.medium é o minimo para conseguir um servidor razoavel
+instance_type = "t3.medium"
+
+# Nome identificador do projeto
+project_name = "meu-servidor-cs2"
+
+# GSLT Token (AppID 730) 
+# Obtenha o seu em: https://steamcommunity.com/dev/managegameservers
+cs2_gslt_token = "COLE_SEU_TOKEN_AQUI"
