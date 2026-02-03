@@ -4,11 +4,12 @@ data "aws_caller_identity" "current" {}
 locals {
   bucket_name = "cs2-server-backups-${data.aws_caller_identity.current.account_id}"
 }
-
+# Identifica o IP para abrir o SSH
 data "http" "my_ip" {
   url = "https://ipv4.icanhazip.com"
 }
 
+# AMI do Ubuntu
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"] # Canonical
@@ -19,6 +20,7 @@ data "aws_ami" "ubuntu" {
   }
 }
 
+# Chaves SSH para conexão na máquina
 resource "tls_private_key" "cs2_key" {
   algorithm = "RSA"
   rsa_bits  = 4096
@@ -42,6 +44,7 @@ resource "aws_vpc" "cs2_vpc" {
   tags = { Name = "cs2-vpc" }
 }
 
+# Internet Gateway
 resource "aws_internet_gateway" "cs2_igw" {
   vpc_id = aws_vpc.cs2_vpc.id
 }
@@ -98,31 +101,67 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_s3_role.name
 }
 
+# Liberação de portas
 resource "aws_security_group" "cs2_sg" {
   name        = "cs2-server-sg"
+  description = "Regras de rede para CS2 e Monitoramento"
   vpc_id      = aws_vpc.cs2_vpc.id
 
+  # SSH restrito ao IP
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["${chomp(data.http.my_ip.response_body)}/32"]
+    description = "Acesso SSH"
   }
 
+  # Porta do Game (UDP)
   ingress {
     from_port   = 27015
     to_port     = 27015
     protocol    = "udp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Trafego de jogo CS2"
   }
 
+  # Porta RCON e Steam Auth (TCP)
   ingress {
     from_port   = 27015
     to_port     = 27015
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "RCON e Auth"
   }
 
+  # Grafana
+  ingress {
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # Pode ser restrito ao seu IP se preferir
+    description = "Painel Grafana"
+  }
+
+  # Prometheus
+  ingress {
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
+    cidr_blocks = ["${chomp(data.http.my_ip.response_body)}/32"]
+    description = "Acesso Interno Prometheus"
+  }
+
+  # Logs Centralizados Loki
+  ingress {
+    from_port   = 3100
+    to_port     = 3100
+    protocol    = "tcp"
+    cidr_blocks = ["127.0.0.1/32"] # Geralmente apenas comunicacao interna
+    description = "API Loki Logs"
+  }
+
+  # Saida livre para a internet
   egress {
     from_port   = 0
     to_port     = 0
@@ -131,19 +170,37 @@ resource "aws_security_group" "cs2_sg" {
   }
 }
 
+# Upload do script de instalação renderizado para o S3
+resource "aws_s3_object" "install_script" {
+  bucket  = local.bucket_name
+  key     = "scripts/install_cs2.sh"
+  content = templatefile("${path.module}/scripts/install_cs2.sh", {
+    gslt_token      = trimspace(var.cs2_gslt_token)
+    s3_bucket_name  = local.bucket_name
+    server_password = var.cs2_server_password
+  })
+  content_type = "text/x-shellscript"
+  depends_on   = [null_resource.cs2_backups_setup]
+}
+
+# Instância do servidor
 resource "aws_instance" "cs2_server" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.cs2_subnet.id
   vpc_security_group_ids = [aws_security_group.cs2_sg.id]
-  key_name               = aws_key_pair.cs2_key_pair.key_name
+  key_name                = aws_key_pair.cs2_key_pair.key_name
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
 
-  user_data = templatefile("${path.module}/scripts/install_cs2.sh", {
-    gslt_token      = trimspace(var.cs2_gslt_token)
-    s3_bucket_name  = local.bucket_name
-    server_password = var.cs2_server_password
-  })
+  # Bootstrap que baixa o script real do S3
+  user_data = <<-EOF
+    #!/bin/bash
+    apt-get update
+    apt-get install -y awscli
+    aws s3 cp s3://${local.bucket_name}/scripts/install_cs2.sh /tmp/install_cs2.sh
+    chmod +x /tmp/install_cs2.sh
+    /bin/bash /tmp/install_cs2.sh
+  EOF
 
   root_block_device {
     volume_size = 120
@@ -152,5 +209,5 @@ resource "aws_instance" "cs2_server" {
 
   tags = { Name = "CS2-Dedicated-Server" }
 
-  depends_on = [null_resource.cs2_backups_setup]
+  depends_on = [aws_s3_object.install_script]
 }

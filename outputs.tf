@@ -1,39 +1,39 @@
-# IP Público do Servidor
-output "server_public_ip" {
-  description = "IP Público do servidor de CS2"
-  value       = aws_instance.cs2_server.public_ip
+# Link direto para o Monitoramento
+output "grafana_url" {
+  description = "URL para acompanhar o build e a saúde do servidor"
+  value       = "http://${aws_instance.cs2_server.public_ip}:3000"
 }
 
-# Comando para conexão no game
+# Comando para conexão direta no game com suporte a senha
 output "cs2_connect_command" {
   description = "Comando para conectar no server"
-  value       = "connect ${aws_instance.cs2_server.public_ip}:27015"
+  value       = var.cs2_server_password != "" ? "connect ${aws_instance.cs2_server.public_ip}:27015; password ${var.cs2_server_password}" : "connect ${aws_instance.cs2_server.public_ip}:27015"
 }
 
-# Comando de Acesso SSH
-output "ssh_connection_command" {
-  description = "Comando para acessar o servidor via terminal"
-  value       = "ssh -i cs2-server-key.pem ubuntu@${aws_instance.cs2_server.public_ip}"
-}
-
-# Mensagem Informativa de Pós-Instalação
+# Mensagem Informativa Consolidada
 output "instrucoes_finais" {
-  description = "Passos para verificar se o servidor está pronto"
+  description = "Instruções de acompanhamento"
   value       = <<EOT
 
 SERVIDOR DE CS2 EM PROVISIONAMENTO
 
-A infraestrutura foi criada, mas o download do jogo está ocorrendo.
-Aguarde de 15 a 20 minutos para que o processo seja concluído.
+A infraestrutura foi criada com sucesso. Agora o servidor está instalando 
+as dependências e baixando os arquivos do jogo.
 
-Para acompanhar o progresso da instalação em tempo real, execute:
-  ssh -i cs2-server-key.pem ubuntu@${aws_instance.cs2_server.public_ip} "tail -f /var/log/user-data.log"
+ACOMPANHE EM TEMPO REAL:
+  Acesse o Grafana: http://${aws_instance.cs2_server.public_ip}:3000
+  Vá em 'Explore' e selecione o log 'installation_logs' para ver o build
 
-Quando o log exibir "Processo finalizado", você poderá conectar com:
-  Comando: connect ${aws_instance.cs2_server.public_ip}:27015
+Comando de conexão do server:
+  ${var.cs2_server_password != "" ? "connect ${aws_instance.cs2_server.public_ip}:27015; password ${var.cs2_server_password}" : "connect ${aws_instance.cs2_server.public_ip}:27015"}
 
-Backups das configurações de skin:
-  Os backups do banco de dados serão salvos ao desligar o servidor em:
-  https://s3.console.aws.amazon.com/s3/buckets/${local.bucket_name}?region=${var.aws_region}
+Backups das configurações de skins é armazenado em:
+   https://s3.console.aws.amazon.com/s3/buckets/${local.bucket_name}?region=${var.aws_region}
+
+Caso precise acessar a máquina via SSH, utilize:
+  Comando: ssh -i cs2-server-key.pem ubuntu@${aws_instance.cs2_server.public_ip}
+   Logs: ssh -i cs2-server-key.pem ubuntu@${aws_instance.cs2_server.public_ip} "tail -f /var/log/user-data.log"
+
+O tempo de download depende da rede da AWS.
 EOT
 }
