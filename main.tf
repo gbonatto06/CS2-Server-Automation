@@ -101,73 +101,74 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_s3_role.name
 }
 
-# Liberação de portas
+# Definindo uma variável local para o IP do administrador
+locals {
+  admin_cidr = ["${chomp(data.http.my_ip.response_body)}/32"]
+}
+
 resource "aws_security_group" "cs2_sg" {
   name        = "cs2-server-sg"
-  description = "Regras de rede para CS2 e Monitoramento"
+  description = "Seguranca do Servidor CS2: Acesso restrito ao administrador"
   vpc_id      = aws_vpc.cs2_vpc.id
 
-  # SSH restrito ao IP
+  # SSH restrito ao IP do Administrador
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["${chomp(data.http.my_ip.response_body)}/32"]
-    description = "Acesso SSH"
+    cidr_blocks = local.admin_cidr
+    description = "Acesso SSH - Administrativo"
   }
 
-  # Porta do Game (UDP)
+  # CS2 Game Traffic, aberto ao público para os jogadores conectarem
   ingress {
     from_port   = 27015
     to_port     = 27015
     protocol    = "udp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Trafego de jogo CS2"
+    description = "Trafego de jogo CS2 (UDP) - Publico"
   }
 
-  # Porta RCON e Steam Auth (TCP)
+  # RCON: Acesso ao Console Remoto via TCP
+  # Essencial restringir ao Admin para evitar ataques de força bruta no console do jogo.
   ingress {
     from_port   = 27015
     to_port     = 27015
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "RCON e Auth"
+    cidr_blocks = local.admin_cidr
+    description = "Acesso RCON - Administrativo"
   }
 
-  # Grafana
+  # Grafana Dashboards, restrito ao IP do Administrador
   ingress {
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # Pode ser restrito ao seu IP se preferir
-    description = "Painel Grafana"
+    cidr_blocks = local.admin_cidr
+    description = "Interface Grafana - Administrativo"
   }
 
-  # Prometheus
+  # Prometheus UI, restrito ao IP do Administrador
   ingress {
     from_port   = 9090
     to_port     = 9090
     protocol    = "tcp"
-    cidr_blocks = ["${chomp(data.http.my_ip.response_body)}/32"]
-    description = "Acesso Interno Prometheus"
+    cidr_blocks = local.admin_cidr
+    description = "Interface Prometheus - Administrativo"
   }
 
-  # Logs Centralizados Loki
-  ingress {
-    from_port   = 3100
-    to_port     = 3100
-    protocol    = "tcp"
-    cidr_blocks = ["127.0.0.1/32"] # Geralmente apenas comunicacao interna
-    description = "API Loki Logs"
-  }
+  # Portas internas (Loki 3100, Exporters 9100, 9137) nao precisam de 
+  # ingress rules no SG se a comunicacao for via Localhost entre os containers.
 
-  # Saida livre para a internet
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Saida livre para atualizacoes e comunicacao S3/Steam"
   }
+
+  tags = { Name = "cs2-server-security-group" }
 }
 
 # Upload do script de instalação renderizado para o S3
@@ -192,7 +193,7 @@ resource "aws_instance" "cs2_server" {
   key_name                = aws_key_pair.cs2_key_pair.key_name
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
 
-  # Bootstrap que baixa o script real do S3
+  # Bootstrap que baixa o script de instalação do S3
   user_data = <<-EOF
     #!/bin/bash
     apt-get update
