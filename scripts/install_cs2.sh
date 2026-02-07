@@ -200,10 +200,29 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
         "reduceOptions": { "calcs": ["last"], "fields": "", "values": false },
         "fieldConfig": {
           "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "green", "value": 1}
+              ]
+            },
             "mappings": [
-              { "type": "special", "options": { "match": "null", "result": { "text": "Instalando", "color": "red" } } },
-              { "type": "range", "options": { "from": 0, "to": 0.9, "result": { "text": "Offline", "color": "red" } } },
-              { "type": "range", "options": { "from": 1, "to": 1, "result": { "text": "Online", "color": "green" } } }
+              {
+                "type": "value",
+                "options": {
+                  "0": { "text": "Offline", "color": "red"},
+                  "1": { "text": "Online", "color": "green"}
+                
+                }
+              },
+              {
+                "type": "special",
+                "options": {
+                  "match": "null",
+                  "result": { "text": "Instalando", "color": "#FF9900" }
+                }
+              }
             ]
           }
         }
