@@ -175,7 +175,7 @@ providers:
       path: /etc/grafana/provisioning/dashboards/definitions
 DASHPROV
 
-# Salvar o JSON Completo do Dashboard (Atualizado com métricas Python)
+# Salvar o JSON Completo do Dashboard
 cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json
 {
   "editable": true,
@@ -184,49 +184,47 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
   "links": [],
   "panels": [
     {
-      {
-        "title": "Status do Servidor",
-        "type": "stat",
-        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
-        "datasource": { "type": "prometheus", "uid": "Prometheus" },
-        "targets": [
-          { "expr": "cs2_server_up", "format": "table", "refId": "A" }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                { "color": "red", "value": null },
-                { "color": "green", "value": 1 }
-              ]
-            },
-            "mappings": [
-              {
-                "type": "value",
-                "options": {
-                  "0": { "text": "Offline", "color": "red" },
-                  "1": { "text": "Online", "color": "green" }
-                }
-              },
-              {
-                "type": "special",
-                "options": {
-                  "match": "null",
-                  "result": { "text": "Instalando", "color": "#FF9900" }
-                }
-              }
+      "title": "Status do Servidor",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "cs2_server_up", "format": "table", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
             ]
-          }
-        },
-        "options": {
-          "colorMode": "background",
-          "graphMode": "none",
-          "justifyMode": "center",
-          "noDataText": "Instalando",
-          "textMode": "value",
-          "reduceOptions": { "calcs": ["last"], "fields": "", "values": false }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "Offline", "color": "red" },
+                "1": { "text": "Online", "color": "green" }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": { "text": "Instalando", "color": "#FF9900" }
+              }
+            }
+          ]
         }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "noDataText": "Instalando",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false }
       }
     },
     {
