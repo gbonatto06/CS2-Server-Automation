@@ -5,7 +5,7 @@ echo "Provisionamento e configuracao do servidor de cs2"
 
 # Dependencias do Sistema
 sudo apt-get update
-sudo apt-get install -y lib32gcc-s1 lib32stdc++6 curl tar unzip wget jq dotnet-runtime-8.0 docker.io docker-compose-v2 awscli
+sudo apt-get install -y lib32gcc-s1 lib32stdc++6 curl tar unzip wget jq dotnet-runtime-8.0 docker.io docker-compose-v2 awscli python3-pip python3-venv
 
 # Configuracao do Usuario steam e Variaveis de Caminho
 sudo useradd -m steam || true
@@ -19,22 +19,81 @@ echo "Iniciando Stack de Observabilidade"
 MON_DIR="$USER_HOME/monitoring"
 sudo -u steam mkdir -p $MON_DIR/prometheus $MON_DIR/promtail
 
+# Instalação das dependências do exportador de métricas do servidor
+echo "Criando ambiente virtual Python..."
+sudo -u steam python3 -m venv $MON_DIR/venv
+
+sudo -u steam $MON_DIR/venv/bin/pip install python-valve prometheus_client
+
+# Exporter de métricas
+cat <<'PYTHON_EXP' | sudo -u steam tee $MON_DIR/cs2_exporter.py
+import time, collections, collections.abc
+from prometheus_client import start_http_server, Gauge, Info
+
+if not hasattr(collections, 'Mapping'):
+    collections.Mapping = collections.abc.Mapping
+import valve.source.a2s
+
+SERVER_ADDRESS = ("127.0.0.1", 27015)
+EXPORTER_PORT = 9137
+
+cs2_up = Gauge('cs2_server_up', 'Status do servidor')
+cs2_players = Gauge('cs2_player_count', 'Contagem de jogadores')
+cs2_map = Info('cs2_current_map', 'Informacoes do mapa')
+
+def fetch_metrics():
+    try:
+        with valve.source.a2s.ServerQuerier(SERVER_ADDRESS, timeout=5) as server:
+            info = server.info()
+            cs2_up.set(1)
+            cs2_players.set(info["player_count"])
+            cs2_map.info({'map_name': info["map"]})
+    except Exception as e:
+        cs2_up.set(0)
+        cs2_players.set(0)
+
+if __name__ == '__main__':
+    start_http_server(EXPORTER_PORT)
+    while True:
+        fetch_metrics()
+        time.sleep(15)
+PYTHON_EXP
+
+# Servico Systemd para o Exportador Python
+cat <<SYSTEMD_EXP | sudo tee /etc/systemd/system/cs2-exporter.service
+[Unit]
+Description=Exportador de métricas do CS2
+After=network.target
+
+[Service]
+ExecStart=/home/steam/monitoring/venv/bin/python /home/steam/monitoring/cs2_exporter.py
+Restart=always
+User=steam
+
+[Install]
+WantedBy=multi-user.target
+SYSTEMD_EXP
+
+sudo systemctl daemon-reload
+sudo systemctl enable cs2-exporter
+sudo systemctl start cs2-exporter
+
 # monitoramento do servidor para enviar pro grafana
 cat <<PROMETHEUS | sudo -u steam tee $MON_DIR/prometheus/prometheus.yml
 global:
-  scrape_interval: 10s  
-  scrape_timeout: 10s
+  scrape_interval: 10s
+  scrape_timeout: 9s
 
 scrape_configs:
-  - job_name: 'sistema' # monitoramento da infraestrutura
+  - job_name: 'sistema'
     static_configs:
       - targets: ['127.0.0.1:9100']
 
-  - job_name: 'cs2_game'  # monitoramento do servidor
+  - job_name: 'cs2_game'
     static_configs:
       - targets: ['127.0.0.1:9137']
 
-  - job_name: 'network_integrity' # Vamos monitorar a rede com o blackbox
+  - job_name: 'network_integrity'
     metrics_path: /probe
     params:
       module: [icmp]
@@ -46,6 +105,16 @@ scrape_configs:
       - target_label: __address__
         replacement: 127.0.0.1:9115
 PROMETHEUS
+
+# Configuração do Blackbox Exporter
+cat <<BLACKBOX | sudo -u steam tee $MON_DIR/blackbox.yml
+modules:
+  icmp:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: "ip4"
+BLACKBOX
 
 # Config Promtail para ler o log de instalacao
 cat <<PROMTAIL | sudo -u steam tee $MON_DIR/promtail/config.yml
@@ -80,13 +149,14 @@ datasources:
   - name: Loki
     type: loki
     access: proxy
-    url: http://loki:3100
+    url: http://127.0.0.1:3100
     isDefault: true
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://172.17.0.1:9090
+    url: http://127.0.0.1:9090
 DATASOURCES
+
 
 # Criar pastas de provisionamento para Dashboards
 sudo -u steam mkdir -p $MON_DIR/grafana/provisioning/dashboards/definitions
@@ -105,21 +175,7 @@ providers:
       path: /etc/grafana/provisioning/dashboards/definitions
 DASHPROV
 
-
-# Captura o IP privado interno da instância
-INTERNAL_IP=$(hostname -I | awk '{print $1}')
-# Configuração do SRCDS Exporter para exportar métricas do CS2
-# Cria o config com o IP privado 
-cat <<SRCDSCONF | sudo tee /home/steam/monitoring/prometheus/srcds.yaml
-options:
-  connectTimeout: 5s
-servers:
-  cs2_dedicated:
-    address: "$${INTERNAL_IP}:27015" # Uso do IP privado pois o cs2 não estava aceitando ip interno
-    rconPassword: "${server_password}"
-SRCDSCONF
-
-# Salvar o JSON Completo do Dashboard
+# Salvar o JSON Completo do Dashboard (Atualizado com métricas Python)
 cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json
 {
   "editable": true,
@@ -133,20 +189,21 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "srcds_up{instance=\"cs2_dedicated\"}", "format": "table", "refId": "A" }
+        { "expr": "cs2_server_up", "format": "table", "refId": "A" }
       ],
       "options": {
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
-        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false },
+        "noDataText": "Instalando",
         "textMode": "value",
-        "text": { "valueSize": 24 },
+        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false },
         "fieldConfig": {
           "defaults": {
             "mappings": [
-              { "type": "special", "options": { "match": "null", "result": { "text": "OFFLINE", "color": "red" } } },
-              { "type": "range", "options": { "from": 0, "to": 100000, "result": { "text": "ONLINE", "color": "green" } } }
+              { "type": "special", "options": { "match": "null", "result": { "text": "Instalando", "color": "red" } } },
+              { "type": "range", "options": { "from": 0, "to": 0.9, "result": { "text": "Offline", "color": "red" } } },
+              { "type": "range", "options": { "from": 1, "to": 1, "result": { "text": "Online", "color": "green" } } }
             ]
           }
         }
@@ -162,17 +219,20 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       }
     },
     {
-      "title": "Mapa / Players",
+      "title": "Mapa & Players",
       "type": "stat",
       "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "srcds_playercount{instance=\"cs2_dedicated\"}", "refId": "A" },
-        { "expr": "srcds_map{instance=\"cs2_dedicated\"}", "refId": "B" }
+        { "expr": "cs2_player_count", "legendFormat": "Jogadores", "refId": "A" },
+        { "expr": "cs2_current_map_info", "legendFormat": "{{map_name}}", "refId": "B" }
       ],
       "options": {
         "textMode": "value_and_name",
-        "reduceOptions": { "values": false, "calcs": ["last"], "fields": "/^map$|^value$/" }
+        "reduceOptions": { 
+          "values": false,
+          "calcs": ["last"],
+          "fields": "/^Jogadores$|^map_name$/" }
       }
     },
     {
@@ -221,76 +281,96 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
 }
 DASHJSON
 
-# Capturamos o IP público da nossa máquina atual
-PUBLIC_IP=$(curl -s https://ipv4.icanhazip.com | tr -d '\r\n') # remove possíveis quebras de linhas e retornos indesejados
-# Define o caminho do arquivo JSON do Dashboard
+# Capturamos o IP público e injetamos no Placeholder
+PUBLIC_IP=$(curl -s https://ipv4.icanhazip.com | tr -d '\r\n')
 DASH_FILE="$MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json"
-# Injetamos o IP do servidor para que ele seja mostrado lá no grafana
 sudo sed -i "s|SERVER_IP_PLACEHOLDER|$PUBLIC_IP|g" "$DASH_FILE"
 
 echo "IP $PUBLIC_IP injetado com sucesso no dashboard."
+
+# Ajustar permissões dos arquivos de configuração para evitar erros de leitura pelos containers
+sudo chmod -R 755 $MON_DIR
+sudo chmod 644 $MON_DIR/prometheus/prometheus.yml
+sudo chmod 644 $MON_DIR/promtail/config.yml
+sudo chmod 644 $MON_DIR/blackbox.yml
 
 # Docker Compose
 cat <<DOCKERCOMPOSE | sudo -u steam tee $MON_DIR/docker-compose.yml
 services:
   grafana:
     image: grafana/grafana:latest
-    ports: ["3000:3000"]
+    network_mode: "host"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-      - GF_SERVER_PUBLIC_IP=$(curl -s https://ipv4.icanhazip.com) # Captura o IP para o Grafana
-      - GF_PANELS_DISABLE_SANITIZE_HTML=true # Habilita botões HTML
-      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/definitions/cs2_server.json # Pagina principal do grafana vai ser o dashboard
+      - GF_SERVER_PUBLIC_IP=$(curl -s https://ipv4.icanhazip.com)
+      - GF_PANELS_DISABLE_SANITIZE_HTML=true
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/definitions/cs2_server.json
     restart: always
+    
   prometheus:
     image: prom/prometheus:latest
     network_mode: "host"
-    volumes: ["./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     restart: always
+    
   loki:
     image: grafana/loki:latest
     ports: ["3100:3100"]
     restart: always
+    
   promtail:
     image: grafana/promtail:latest
-    volumes: ["/var/log:/var/log", "./promtail/config.yml:/etc/promtail/config.yml"]
+    volumes:
+      - /var/log:/var/log
+      - ./promtail/config.yml:/etc/promtail/config.yml
+      # Mapeamos logs do jogo também para o container ver
+      - /home/steam/cs2_server/game/csgo:/home/steam/cs2_server/game/csgo
     restart: always
+    
   node-exporter:
     image: prom/node-exporter:latest
     container_name: node-exporter
     network_mode: "host"
     pid: "host"
     restart: always
-  cs2-exporter:
-    image: ghcr.io/galexrt/srcds_exporter:v1.6.0 #Não temos versão latest aqui
-    container_name: cs2-exporter
-    volumes:
-      - ./prometheus/srcds.yaml:/etc/srcds.yaml
-    command:
-      - --config.file=/etc/srcds.yaml
-    network_mode: "host" # Comunicação com o CS2 em 127.0.0.1
-    restart: always
+    
   blackbox-exporter:
-    image: prom/blackbox-exporter:latest # blackbox para monitoramento da rede
+    image: prom/blackbox-exporter:latest
     container_name: blackbox-exporter
     network_mode: "host"
+    volumes:
+      - ./blackbox.yml:/config/blackbox.yml
+    command: --config.file=/config/blackbox.yml
     restart: always
 DOCKERCOMPOSE
 
 cd $MON_DIR
 sudo docker compose up -d
 
-echo "Aguardando Grafana estabilizar na porta 3000."
-# Usamos 127.0.0.1 para evitar problemas de DNS local e --fail para simplificar a logica
+# Debug: Se falhar, mostra os logs do container problematico
+echo "Verificando status inicial dos containers..."
+sleep 5
+if ! curl -s --fail http://127.0.0.1:9090/-/healthy > /dev/null; then
+    echo "ALERTA: Prometheus falhou ao iniciar. Logs recentes:"
+    sudo docker compose logs prometheus | tail -n 20
+fi
+
+echo "Aguardando Prometheus estabilizar na porta 9090..."
+until curl -s --fail http://127.0.0.1:9090/-/healthy > /dev/null; do
+  echo "Prometheus ainda iniciando..."
+  sleep 5
+done
+
+echo "Aguardando Grafana estabilizar na porta 3000..."
 until curl -s --fail http://127.0.0.1:3000/api/health > /dev/null; do
   echo "Grafana ainda carregando plugins e banco de dados interno."
   sleep 5
 done
-echo "Grafana UP! Iniciando o download do jogo."
-
+echo "Stack de Monitoramento UP! Iniciando o download do jogo."
 
 cd $USER_HOME
 # Instalacao do SteamCMD e CS2
@@ -320,7 +400,6 @@ sudo -u steam unzip -o /tmp/css.zip -d $CSGO_DIR
 
 # Instalacao de Plugins Base (AnyBaseLib, PlayerSettings, MenuManager)
 for plugin in AnyBaseLib PlayerSettings MenuManager; do
-    # Usamos $plugin sem chaves para evitar confusao no Terraform
     URL=$(curl -s "https://api.github.com/repos/NickFox007/""$plugin""CS2/releases/latest" | jq -r ".assets[] | select(.name == \"$plugin.zip\") | .browser_download_url")
     sudo -u steam wget $URL -O /tmp/$plugin.zip
     sudo -u steam unzip -o /tmp/$plugin.zip -d $CSGO_DIR
@@ -356,7 +435,7 @@ until sudo docker exec cs2-mysql mysqladmin ping -h 127.0.0.1 -u"cs2_admin" -p"c
     sleep 5
 done
 
-# Aguardar acesso ao S3 (Variaveis do Terraform sem chaves extras)
+# Aguardar acesso ao S3
 until aws s3 ls "s3://${s3_bucket_name}" > /dev/null 2>&1; do
     echo "Aguardando permissao do S3..."
     sleep 5
@@ -388,27 +467,29 @@ cat <<PLUGINEOF | sudo -u steam tee $WP_CONFIG_DIR/WeaponPaints.json
 PLUGINEOF
 
 # Identidade Steam
+sudo -u steam mkdir -p /home/steam/.steam/sdk64
+sudo -u steam mkdir -p $CS2_DIR/game/bin/linuxsteamrt64
 sudo -u steam cp /home/steam/steamcmd/linux64/steamclient.so /home/steam/.steam/sdk64/steamclient.so
 sudo -u steam cp /home/steam/steamcmd/linux64/steamclient.so $CS2_DIR/game/bin/linuxsteamrt64/steamclient.so
 sudo -u steam echo "730" > $CS2_DIR/game/bin/linuxsteamrt64/steam_appid.txt
-sudo chown -R steam:steam /home/steam/
 
 # -----------------------------------------------------------------------#
 # Script de inicializacao do servidor de cs
-cat <<EOF | sudo tee $USER_HOME/start_server.sh
 #!/bin/bash
 set -euo pipefail
 GSLT_TOKEN="${gslt_token}"
 SERVER_PASS="${server_password}"
-if [ -z "\$GSLT_TOKEN" ] || [ \$${#GSLT_TOKEN} -lt 20 ]; then
-  echo "ERRO: Token GSLT invalido"
+
+
+if [ -z "$GSLT_TOKEN" ] || [ $${#GSLT_TOKEN} -lt 20 ]; then
+  echo "ERRO: Token GSLT invalido ou curto demais"
   exit 1
 fi
+
 export DOTNET_BUNDLE_EXTRACT_BASE_DIR=$USER_HOME/.net/extract
-# Usamos o escape duplo do Terraform ($$) para variaveis complexas do Linux
-export LD_LIBRARY_PATH="$CS2_DIR/game/bin/linuxsteamrt64:\$${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="$CS2_DIR/game/bin/linuxsteamrt64:$${LD_LIBRARY_PATH:-}"
 cd $CS2_DIR/game/bin/linuxsteamrt64
-./cs2 -dedicated -usercon -condebug -ip 0.0.0.0 -port 27015 +map de_dust2 +game_type 0 +game_mode 1 +sv_setsteamaccount "\$GSLT_TOKEN" +sv_password "\$SERVER_PASS" +rcon_password "${server_password}" +log on +sv_logflush 1 +sv_logsdir logs
+./cs2 -dedicated -condebug -usercon -ip 0.0.0.0 -port 27015 +map de_dust2 +sv_setsteamaccount "$GSLT_TOKEN" +sv_password "$SERVER_PASS" +rcon_password "${server_password}" +log on +sv_logflush 1 +sv_logsdir logs
 EOF
 
 # Script de backup do banco de dados das skins
@@ -416,16 +497,17 @@ cat <<EOF | sudo tee $USER_HOME/backup_db.sh
 #!/bin/bash
 set -euo pipefail
 S3_BUCKET="${s3_bucket_name}"
-TIMESTAMP=\$(date +%Y%m%d_%H%M%S)
-BACKUP_PATH="/home/steam/backup_cs2_\$TIMESTAMP.sql"
-docker exec cs2-mysql mysqldump --no-tablespaces --single-transaction --quick -h 127.0.0.1 -u cs2_admin -pcs2_password_safe cs2_server > "\$BACKUP_PATH"
-if [ -s "\$BACKUP_PATH" ]; then
-    aws s3 cp "\$BACKUP_PATH" "s3://\$S3_BUCKET/" --only-show-errors
-    rm -f "\$BACKUP_PATH"
+TIMESTAMP=$$(date +%Y%m%d_%H%M%S)
+BACKUP_PATH="/home/steam/backup_cs2_$$TIMESTAMP.sql"
+docker exec cs2-mysql mysqldump --no-tablespaces --single-transaction --quick -h 127.0.0.1 -u cs2_admin -pcs2_password_safe cs2_server > "$$BACKUP_PATH"
+if [ -s "$$BACKUP_PATH" ]; then
+    aws s3 cp "$$BACKUP_PATH" "s3://$$S3_BUCKET/" --only-show-errors
+    rm -f "$$BACKUP_PATH"
 fi
 EOF
 
 # permissões de arquivos
+sudo -u steam mkdir -p $CSGO_DIR/logs
 sudo chmod +x $USER_HOME/*.sh
 sudo chown steam:steam $USER_HOME/*.sh
 sudo chmod -R 755 $CSGO_DIR/logs
