@@ -233,7 +233,7 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       "gridPos": { "h": 4, "w": 18, "x": 6, "y": 0 },
       "options": {
         "mode": "html",
-        "content": "<div style='display:flex;align-items:center;justify-content:center;height:100%;gap:20px;'><div style='font-size:1.2em;'>IP do Servidor: <strong id='serverIp'>SERVER_IP_PLACEHOLDER</strong></div><button id='copyBtn' onclick='window.copyConnectCommand()' style='background:#3274d9;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;font-weight:bold;'>Copiar Comando</button></div><script>window.copyConnectCommand = function(){const i=document.getElementById('serverIp').innerText,p='${server_password}',c=p?`connect $${i}:27015; password $${p}`:`connect $${i}:27015`;navigator.clipboard.writeText(c).then(()=>{const b=document.getElementById('copyBtn'),o=b.innerText;b.innerText='Copiado!';b.style.background='#56A64B';setTimeout(()=>{b.innerText=o;b.style.background='#3274d9'},2000)})}</script>"
+        "content": "<div style='display:flex;align-items:center;justify-content:center;height:100%;gap:20px;'><div style='font-size:1.2em;'>IP do Servidor: <strong id='serverIp'>SERVER_IP_PLACEHOLDER</strong></div><button id='copyBtn' onclick='window.copyConnectCommand()' style='background:#3274d9;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;font-weight:bold;'>Copiar Comando</button></div><script>window.copyConnectCommand = function() { var ip = document.getElementById('serverIp').innerText; var pass = '${server_password}'; var cmd = pass ? ('connect ' + ip + ':27015; password ' + pass) : ('connect ' + ip + ':27015'); var textArea = document.createElement('textarea'); textArea.value = cmd; document.body.appendChild(textArea); textArea.select(); try { document.execCommand('copy'); var btn = document.getElementById('copyBtn'); var originalText = btn.innerText; btn.innerText = 'Copiado!'; btn.style.background = '#56A64B'; setTimeout(function() { btn.innerText = originalText; btn.style.background = '#3274d9'; }, 2000); } catch (err) { console.error('Erro ao copiar', err); } document.body.removeChild(textArea); }</script>"
       }
     },
     {
@@ -398,6 +398,10 @@ cd $USER_HOME/steamcmd
 sudo -u steam curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | sudo -u steam tar zxvf -
 sudo -u steam ./steamcmd.sh +force_install_dir $CS2_DIR +login anonymous +app_update 730 validate +quit
 
+sudo chown -R steam:steam $CS2_DIR
+sudo chmod -R 755 $CS2_DIR
+
+
 # Instalacao do Metamod
 echo "Buscando versao mais recente do metamod"
 LATEST_METAMOD_FILE=$(curl -s https://mms.alliedmods.net/mmsdrop/2.0/mmsource-latest-linux)
@@ -493,6 +497,7 @@ sudo -u steam echo "730" > $CS2_DIR/game/bin/linuxsteamrt64/steam_appid.txt
 
 # -----------------------------------------------------------------------#
 # Script de inicializacao do servidor de cs
+cat <<EOF | sudo tee $USER_HOME/start_server.sh
 #!/bin/bash
 set -euo pipefail
 GSLT_TOKEN="${gslt_token}"
