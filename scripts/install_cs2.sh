@@ -1,6 +1,11 @@
 #!/bin/bash
-# Redirecionar saida para log para debug
+# Redirecionar saida para log para debug e liberar leitura para o Promtail
 exec > /var/log/user-data.log 2>&1
+sudo chmod 644 /var/log/user-data.log
+
+# Garante que a senha venha do Terraform para uma variavel global do shell
+SERVER_PASS_VAR="${server_password}"
+
 echo "Provisionamento e configuracao do servidor de cs2"
 
 # Dependencias do Sistema
@@ -17,17 +22,16 @@ CSS_DIR="$CSGO_DIR/addons/counterstrikesharp"
 
 echo "Iniciando Stack de Observabilidade"
 MON_DIR="$USER_HOME/monitoring"
-sudo -u steam mkdir -p $MON_DIR/prometheus $MON_DIR/promtail
+sudo -u steam mkdir -p $MON_DIR/prometheus $MON_DIR/promtail $MON_DIR/loki $MON_DIR/grafana
 
 # Instalação das dependências do exportador de métricas do servidor
 echo "Criando ambiente virtual Python..."
 sudo -u steam python3 -m venv $MON_DIR/venv
-
 sudo -u steam $MON_DIR/venv/bin/pip install python-valve prometheus_client
 
 # Exporter de métricas
 cat <<'PYTHON_EXP' | sudo -u steam tee $MON_DIR/cs2_exporter.py
-import time, collections, collections.abc, socket
+import time, collections, collections.abc
 from prometheus_client import start_http_server, Gauge, Info
 
 if not hasattr(collections, 'Mapping'):
@@ -37,24 +41,22 @@ import valve.source.a2s
 SERVER_ADDRESS = ("127.0.0.1", 27015)
 EXPORTER_PORT = 9137
 
-hostname = socket.gethostname()
-cs2_up = Gauge('cs2_server_up', 'Status', ['server_name'])
-cs2_players = Gauge('cs2_player_count', 'Contagem de jogadores', ['server_name'])
-cs2_map = Info('cs2_current_map', 'Informacoes do mapa', ['server_name'])
+cs2_up = Gauge('cs2_server_up', 'Status do servidor')
+cs2_players = Gauge('cs2_player_count', 'Contagem de jogadores')
+cs2_map = Info('cs2_current_map', 'Informacoes do mapa')
 
 def fetch_metrics():
     try:
         with valve.source.a2s.ServerQuerier(SERVER_ADDRESS, timeout=5) as server:
             info = server.info()
-            
-            cs2_up.labels(server_name=hostname).set(1)
-            cs2_players.labels(server_name=hostname).set(info["player_count"])
-            cs2_map.labels(server_name=hostname).info({'map_name': info["map"]})
-
+            cs2_up.set(1)
+            cs2_players.set(info["player_count"])
+            # Garante compatibilidade com diferentes versoes da lib valve
+            map_name = info.get("map_name", info.get("map", "Unknown"))
+            cs2_map.info({'map_name': map_name})
     except Exception as e:
-
-        cs2_up.labels(server_name=hostname).set(0)
-        cs2_players.labels(server_name=hostname).set(0)
+        cs2_up.set(0)
+        cs2_players.set(0)
 
 if __name__ == '__main__':
     start_http_server(EXPORTER_PORT)
@@ -92,8 +94,6 @@ scrape_configs:
   - job_name: 'sistema'
     static_configs:
       - targets: ['127.0.0.1:9100']
-      labels:
-        server_name: '$(hostname) # Identifica o servidor para a arquitetura horizontal
 
   - job_name: 'cs2_game'
     static_configs:
@@ -105,8 +105,6 @@ scrape_configs:
       module: [icmp]
     static_configs:
       - targets: ['127.0.0.1']
-      labels:
-          server_name: '$(hostname)'
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -124,7 +122,44 @@ modules:
       preferred_ip_protocol: "ip4"
 BLACKBOX
 
-# Config Promtail para ler o log de instalacao
+cat <<LOKICONFIG | sudo -u steam tee $MON_DIR/loki/loki-config.yml
+auth_enabled: false
+server:
+  http_listen_port: 3100
+
+# Desabilita exigencia de schema v13 do Loki 3.0+
+limits_config:
+  allow_structured_metadata: false
+
+common:
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: inmemory
+  replication_factor: 1
+  path_prefix: /tmp/loki
+
+# Configuração do Compactor para evitar erro de mkdir e conflitos de retenção
+compactor:
+  working_directory: /tmp/loki/boltdb-shipper-compactor
+  shared_store: filesystem
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v11
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  filesystem:
+    directory: /tmp/loki/chunks
+LOKICONFIG
+
+# Config Promtail para ler o log de instalacao e do jogo
 cat <<PROMTAIL | sudo -u steam tee $MON_DIR/promtail/config.yml
 server:
   http_listen_port: 9080
@@ -136,7 +171,6 @@ scrape_configs:
     - targets: [localhost]
       labels:
         job: installation_logs
-        instance: '$(hostname)'
         __path__: /var/log/user-data.log
 
   - job_name: game_logs
@@ -144,34 +178,31 @@ scrape_configs:
     - targets: [localhost]
       labels:
         job: cs2_console_logs
-        # Mapeia logs do console e do CounterStrikeSharp
-        instance: '$(hostname)'
         __path__: /home/steam/cs2_server/game/csgo/logs/*.log
 PROMTAIL
 
-# Criar diretorio de provisionamento do Grafana
+# Configurar Loki e Prometheus como Data Sources
 sudo -u steam mkdir -p $MON_DIR/grafana/provisioning/datasources
-
-# Configurar Loki e Prometheus como Data Sources automaticos
+# CORREÇÃO: Adicionados UIDs explícitos para garantir link com o Dashboard
 cat <<DATASOURCES | sudo -u steam tee $MON_DIR/grafana/provisioning/datasources/ds.yaml
 apiVersion: 1
 datasources:
   - name: Loki
     type: loki
+    uid: Loki
     access: proxy
-    url: http://127.0.0.1:3100
-    isDefault: true
+    url: http://localhost:3100
+    isDefault: false
   - name: Prometheus
     type: prometheus
+    uid: Prometheus
     access: proxy
-    url: http://127.0.0.1:9090
+    url: http://localhost:9090
+    isDefault: true
 DATASOURCES
 
-
-# Criar pastas de provisionamento para Dashboards
+# Configurar Dashboards
 sudo -u steam mkdir -p $MON_DIR/grafana/provisioning/dashboards/definitions
-
-# Criar o Provider (Diz ao Grafana para ler arquivos JSON nesta pasta)
 cat <<DASHPROV | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/provider.yaml
 apiVersion: 1
 providers:
@@ -179,13 +210,12 @@ providers:
     orgId: 1
     folder: ''
     type: file
-    disableDeletion: false
-    editable: true
     options:
       path: /etc/grafana/provisioning/dashboards/definitions
 DASHPROV
 
-# Salvar o JSON Completo do Dashboard
+# JSON do Dashboard
+# CORREÇÃO: Substituido ${server_password} por PLACEHOLDER para evitar erro de sintaxe no cat <<'EOF'
 cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json
 {
   "editable": true,
@@ -193,63 +223,22 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "links": [],
-  "templating": {
-    "list": [
-      {
-        "name": "server",
-        "type": "query",
-        "datasource": { "type": "prometheus", "uid": "Prometheus" },
-        "definition": "label_values(cs2_server_up, server_name)",
-        "refresh": 1,
-        "includeAll": false,
-        "multi": false
-      }
-    ]
-  },
   "panels": [
     {
       "title": "Status do Servidor",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "targets": [
-        { "expr": "cs2_server_up{server_name=\"$server\"}", "format": "table", "refId": "A" }
-      ],
+      "targets": [ { "expr": "cs2_server_up", "format": "table", "refId": "A" } ],
       "fieldConfig": {
         "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
-            ]
-          },
           "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": { "text": "Offline", "color": "red" },
-                "1": { "text": "Online", "color": "green" }
-              }
-            },
-            {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": { "text": "Instalando", "color": "#FF9900" }
-              }
-            }
+            { "type": "value", "options": { "0": { "text": "Offline", "color": "red" }, "1": { "text": "Online", "color": "green" } } },
+            { "type": "special", "options": { "match": "null", "result": { "text": "Instalando", "color": "#FF9900" } } }
           ]
         }
       },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "noDataText": "Instalando",
-        "textMode": "value",
-        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false }
-      }
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "noDataText": "Instalando", "textMode": "value", "reduceOptions": { "calcs": ["last"], "values": false } }
     },
     {
       "title": "Conexão Rápida",
@@ -257,7 +246,7 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       "gridPos": { "h": 4, "w": 18, "x": 6, "y": 0 },
       "options": {
         "mode": "html",
-        "content": "<div style='display:flex;align-items:center;justify-content:center;height:100%;gap:20px;'><div style='font-size:1.2em;'>IP do Servidor: <strong id='serverIp'>SERVER_IP_PLACEHOLDER</strong></div><button id='copyBtn' onclick='window.copyConnectCommand()' style='background:#3274d9;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;font-weight:bold;'>Copiar Comando</button></div><script>window.copyConnectCommand = function() { var ip = document.getElementById('serverIp').innerText; var pass = '${server_password}'; var cmd = pass ? ('connect ' + ip + ':27015; password ' + pass) : ('connect ' + ip + ':27015'); var textArea = document.createElement('textarea'); textArea.value = cmd; document.body.appendChild(textArea); textArea.select(); try { document.execCommand('copy'); var btn = document.getElementById('copyBtn'); var originalText = btn.innerText; btn.innerText = 'Copiado!'; btn.style.background = '#56A64B'; setTimeout(function() { btn.innerText = originalText; btn.style.background = '#3274d9'; }, 2000); } catch (err) { console.error('Erro ao copiar', err); } document.body.removeChild(textArea); }</script>"
+        "content": "<div style='display:flex;align-items:center;justify-content:center;height:100%;gap:20px;'><div style='font-size:1.2em;'>IP do Servidor: <strong id='serverIp'>SERVER_IP_PLACE_PLACEHOLDER</strong></div><button id='copyBtn' onclick='window.copyConnectCommand()' style='background:#3274d9;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;font-weight:bold;'>Copiar Connect</button></div><script>window.copyConnectCommand = function() { var ip = document.getElementById('serverIp').innerText; var pass = 'SERVER_PASSWORD_PLACEHOLDER'; var cmd = pass ? ('connect ' + ip + ':27015; password ' + pass) : ('connect ' + ip + ':27015'); var textArea = document.createElement('textarea'); textArea.value = cmd; document.body.appendChild(textArea); textArea.select(); try { document.execCommand('copy'); var btn = document.getElementById('copyBtn'); btn.innerText = 'Copiado!'; setTimeout(function() { btn.innerText = 'Copiar Connect'; }, 2000); } catch (err) { console.error('Erro ao copiar', err); } document.body.removeChild(textArea); }</script>"
       }
     },
     {
@@ -266,16 +255,10 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       "gridPos": { "h": 6, "w": 6, "x": 0, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "cs2_player_count{server_name=\"$server\"}", "legendFormat": "Jogadores", "refId": "A" },
-        { "expr": "cs2_current_map_info{server_name=\"$server\"}", "legendFormat": "{{map_name}}", "refId": "B" }
+        { "expr": "cs2_player_count", "legendFormat": "Jogadores", "refId": "A" },
+        { "expr": "cs2_current_map_info", "legendFormat": "{{map_name}}", "refId": "B" }
       ],
-      "options": {
-        "textMode": "value_and_name",
-        "reduceOptions": { 
-          "values": false,
-          "calcs": ["last"],
-          "fields": "/^Jogadores$|^map_name$/" }
-      }
+      "options": { "textMode": "value_and_name", "reduceOptions": { "values": false, "calcs": ["last"], "fields": "/^Jogadores$|^map_name$/" } }
     },
     {
       "title": "Ping & Loss",
@@ -283,8 +266,8 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       "gridPos": { "h": 6, "w": 6, "x": 6, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "avg_over_time(probe_duration_seconds{instance=~\"$server:.*\"}[5m]) * 1000", "legendFormat": "Ping (ms)" },
-        { "expr": "(1 - avg_over_time(probe_success{instance=~\"$server:.*\"}[5m])) * 100", "legendFormat": "Loss (%)" }
+        { "expr": "avg_over_time(probe_duration_seconds[5m]) * 1000", "legendFormat": "Ping (ms)" },
+        { "expr": "(1 - avg_over_time(probe_success[5m])) * 100", "legendFormat": "Loss (%)" }
       ],
       "options": { "graphMode": "area", "justifyMode": "center" }
     },
@@ -294,8 +277,8 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode='idle', instance=~\"$server:.*\"}[5m])) * 100)", "legendFormat": "CPU %" },
-        { "expr": "((node_memory_MemTotal_bytes{instance=~\"$server:.*\"} - node_memory_MemAvailable_bytes{instance=~\"$server:.*\"}) / node_memory_MemTotal_bytes{instance=~\"$server:.*\"}) * 100", "legendFormat": "RAM %" }
+        { "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)", "legendFormat": "CPU %" },
+        { "expr": "((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes) * 100", "legendFormat": "RAM %" }
       ],
       "options": { "legend": { "displayMode": "table", "placement": "right" } }
     },
@@ -304,7 +287,7 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       "type": "logs",
       "gridPos": { "h": 14, "w": 12, "x": 0, "y": 10 },
       "datasource": { "type": "loki", "uid": "Loki" },
-      "targets": [ { "expr": "{job=\"installation_logs\", instance=\"$server\"}" } ],
+      "targets": [ { "expr": "{job=\"installation_logs\"}" } ],
       "options": { "sortOrder": "Descending", "showTime": true, "wrapLogMessage": true }
     },
     {
@@ -312,7 +295,7 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       "type": "logs",
       "gridPos": { "h": 14, "w": 12, "x": 12, "y": 10 },
       "datasource": { "type": "loki", "uid": "Loki" },
-      "targets": [ { "expr": "{job=\"cs2_console_logs\", instance=\"$server\"}" } ],
+      "targets": [ { "expr": "{job=\"cs2_console_logs\"}" } ],
       "options": { "sortOrder": "Descending", "showTime": true, "wrapLogMessage": true }
     }
   ],
@@ -323,31 +306,21 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
 }
 DASHJSON
 
-# Capturamos o IP público e injetamos no Placeholder
+# Injeta IP Público e Senha no Dashboard
 PUBLIC_IP=$(curl -s https://ipv4.icanhazip.com | tr -d '\r\n')
-DASH_FILE="$MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json"
-sudo sed -i "s|SERVER_IP_PLACEHOLDER|$PUBLIC_IP|g" "$DASH_FILE"
+sed -i "s|SERVER_IP_PLACE_PLACEHOLDER|$PUBLIC_IP|g" "$MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json"
+sed -i "s|SERVER_PASSWORD_PLACEHOLDER|$SERVER_PASS_VAR|g" "$MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json"
 
-echo "IP $PUBLIC_IP injetado com sucesso no dashboard."
-
-# Ajustar permissões dos arquivos de configuração para evitar erros de leitura pelos containers
-sudo chmod -R 755 $MON_DIR
-sudo chmod 644 $MON_DIR/prometheus/prometheus.yml
-sudo chmod 644 $MON_DIR/promtail/config.yml
-sudo chmod 644 $MON_DIR/blackbox.yml
-
-# Docker Compose
+# Docker Compose com Network Host e Promtail Root
 cat <<DOCKERCOMPOSE | sudo -u steam tee $MON_DIR/docker-compose.yml
 services:
   grafana:
     image: grafana/grafana:latest
     network_mode: "host"
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning
+    volumes: ["./grafana/provisioning:/etc/grafana/provisioning"]
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-      - GF_SERVER_PUBLIC_IP=$(curl -s https://ipv4.icanhazip.com)
       - GF_PANELS_DISABLE_SANITIZE_HTML=true
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/definitions/cs2_server.json
     restart: always
@@ -355,63 +328,49 @@ services:
   prometheus:
     image: prom/prometheus:latest
     network_mode: "host"
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    volumes: ["./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"]
     restart: always
     
   loki:
     image: grafana/loki:latest
-    ports: ["3100:3100"]
+    network_mode: "host"
+    user: "0:0"
+    volumes: ["./loki/loki-config.yml:/etc/loki/local-config.yaml"]
+    command: -config.file=/etc/loki/local-config.yaml
     restart: always
-    
+
   promtail:
     image: grafana/promtail:latest
+    network_mode: "host"
+    user: "0:0"
     volumes:
       - /var/log:/var/log
       - ./promtail/config.yml:/etc/promtail/config.yml
-      # Mapeamos logs do jogo também para o container ver
       - /home/steam/cs2_server/game/csgo:/home/steam/cs2_server/game/csgo
     restart: always
     
   node-exporter:
     image: prom/node-exporter:latest
-    container_name: node-exporter
     network_mode: "host"
     pid: "host"
     restart: always
     
   blackbox-exporter:
     image: prom/blackbox-exporter:latest
-    container_name: blackbox-exporter
     network_mode: "host"
-    volumes:
-      - ./blackbox.yml:/config/blackbox.yml
+    volumes: ["./blackbox.yml:/config/blackbox.yml"]
     command: --config.file=/config/blackbox.yml
     restart: always
 DOCKERCOMPOSE
 
-cd $MON_DIR
-sudo docker compose up -d
+# CORREÇÃO CRÍTICA: Ajuste de Permissões para que os Containers (Grafana/Prometheus) possam ler os arquivos
+# Grafana roda como user 472, Prometheus como 65534. chmod 777 garante acesso a leitura.
+sudo chmod -R 777 $MON_DIR
 
-# Debug: Se falhar, mostra os logs do container problematico
-echo "Verificando status inicial dos containers..."
-sleep 5
-if ! curl -s --fail http://127.0.0.1:9090/-/healthy > /dev/null; then
-    echo "ALERTA: Prometheus falhou ao iniciar. Logs recentes:"
-    sudo docker compose logs prometheus | tail -n 20
-fi
+cd $MON_DIR && sudo docker compose up -d
 
-echo "Aguardando Prometheus estabilizar na porta 9090..."
-until curl -s --fail http://127.0.0.1:9090/-/healthy > /dev/null; do
-  echo "Prometheus ainda iniciando..."
-  sleep 5
-done
-
-echo "Aguardando Grafana estabilizar na porta 3000..."
-until curl -s --fail http://127.0.0.1:3000/api/health > /dev/null; do
-  echo "Grafana ainda carregando plugins e banco de dados interno."
-  sleep 5
-done
+# Aguarda serviços de monitoramento estabilizarem
+until curl -s --fail http://127.0.0.1:9090/-/healthy > /dev/null; do sleep 5; done
 echo "Stack de Monitoramento UP! Iniciando o download do jogo."
 
 cd $USER_HOME
@@ -422,173 +381,94 @@ cd $USER_HOME/steamcmd
 sudo -u steam curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | sudo -u steam tar zxvf -
 sudo -u steam ./steamcmd.sh +force_install_dir $CS2_DIR +login anonymous +app_update 730 validate +quit
 
-sudo chown -R steam:steam $CS2_DIR
-sudo chmod -R 755 $CS2_DIR
+# Ajuste de Permissoes Recursivas
+sudo chown -R steam:steam $USER_HOME/
 
-
-
-# Instalacao do Metamod
-echo "Buscando versao mais recente do metamod"
-LATEST_METAMOD_FILE=$(curl -s https://mms.alliedmods.net/mmsdrop/2.0/mmsource-latest-linux)
-METAMOD_URL="https://mms.alliedmods.net/mmsdrop/2.0/$LATEST_METAMOD_FILE"
-sudo -u steam wget $METAMOD_URL -O /tmp/metamod.tar.gz
-sudo -u steam tar -xzvf /tmp/metamod.tar.gz -C $CSGO_DIR
-
+# Aguardar a criação real do gameinfo.gi
+echo "Aguardando a criação do arquivo gameinfo.gi pelo SteamCMD..."
 until [ -f "$CSGO_DIR/gameinfo.gi" ]; do
-  echo "Aguardando os arquivos base do jogo."
-  sleep 10
+    echo "Aguardando arquivos base do jogo..."
+    sleep 10
 done
 
-# Alteracao do gameinfo.gi do metamod
+# Instalacao do Metamod
+LATEST_METAMOD_FILE=$(curl -s https://mms.alliedmods.net/mmsdrop/2.0/mmsource-latest-linux)
+sudo -u steam wget "https://mms.alliedmods.net/mmsdrop/2.0/$LATEST_METAMOD_FILE" -O /tmp/metamod.tar.gz
+sudo -u steam tar -xzvf /tmp/metamod.tar.gz -C $CSGO_DIR
+
+# Alteracao do gameinfo.gi
 if ! grep -q "csgo/addons/metamod" $CSGO_DIR/gameinfo.gi; then
     sudo -u steam sed -i '/Game_LowViolence/a \            Game    csgo/addons/metamod' $CSGO_DIR/gameinfo.gi
 fi
 
-# Instalacao do CSSharp
-echo "Buscando versao mais recente do CSSharp"
+# Instalacao do CSSharp e Plugins Base
 CSS_URL=$(curl -s https://api.github.com/repos/roflmuffin/CounterStrikeSharp/releases/latest | jq -r '.assets[] | select(.name | contains("with-runtime") and contains("linux")) | .browser_download_url')
-sudo -u steam wget $CSS_URL -O /tmp/css.zip
-sudo -u steam unzip -o /tmp/css.zip -d $CSGO_DIR
+sudo -u steam wget $CSS_URL -O /tmp/css.zip && sudo -u steam unzip -o /tmp/css.zip -d $CSGO_DIR
 
-# Instalacao de Plugins Base (AnyBaseLib, PlayerSettings, MenuManager)
 for plugin in AnyBaseLib PlayerSettings MenuManager; do
     URL=$(curl -s "https://api.github.com/repos/NickFox007/""$plugin""CS2/releases/latest" | jq -r ".assets[] | select(.name == \"$plugin.zip\") | .browser_download_url")
-    sudo -u steam wget $URL -O /tmp/$plugin.zip
-    sudo -u steam unzip -o /tmp/$plugin.zip -d $CSGO_DIR
+    sudo -u steam wget $URL -O /tmp/$plugin.zip && sudo -u steam unzip -o /tmp/$plugin.zip -d $CSGO_DIR
 done
 
-# Instalacao MatchZy
+# MatchZy e WeaponPaints
 MATCHZY_URL=$(curl -s https://api.github.com/repos/shobhit-pathak/MatchZy/releases/latest | jq -r '.assets[] | select(.name | startswith("MatchZy-") and endswith(".zip") and (contains("with-cssharp") | not)) | .browser_download_url')
-sudo -u steam wget $MATCHZY_URL -O /tmp/matchzy.zip
-sudo -u steam unzip -o /tmp/matchzy.zip -d $CSGO_DIR
-sudo -u steam sed -i 's/matchzy_everyone_is_admin false/matchzy_everyone_is_admin true/' $CSGO_DIR/cfg/MatchZy/config.cfg
+sudo -u steam wget $MATCHZY_URL -O /tmp/matchzy.zip && sudo -u steam unzip -o /tmp/matchzy.zip -d $CSGO_DIR
 
-# Instalacao WeaponPaints
 WEAPONPAINTS_URL=$(curl -s https://api.github.com/repos/Nereziel/cs2-WeaponPaints/releases/latest | jq -r '.assets[] | select(.name == "WeaponPaints.zip") | .browser_download_url')
 sudo -u steam wget $WEAPONPAINTS_URL -O /tmp/weaponpaints.zip
-sudo -u steam mkdir -p /tmp/wp_temp
-sudo -u steam unzip -o /tmp/weaponpaints.zip -d /tmp/wp_temp
+sudo -u steam mkdir -p /tmp/wp_temp && sudo -u steam unzip -o /tmp/weaponpaints.zip -d /tmp/wp_temp
 sudo -u steam cp -rf /tmp/wp_temp/WeaponPaints $CSS_DIR/plugins/
 sudo -u steam cp -rf /tmp/wp_temp/gamedata/* $CSS_DIR/gamedata/
-rm -rf /tmp/wp_temp
 
-# -----------------------------------------------------------------------#
-# Configuracao do DB e Restore do DB
-echo "Provisionando Banco de Dados"
-sudo mkdir -p /home/steam/mysql_data
-sudo chown -R 999:999 /home/steam/mysql_data
-sudo systemctl enable --now docker
-sudo docker rm -f cs2-mysql || true
+# Configuracao DB e Restore
 sudo docker run -d --name cs2-mysql --restart always -e MYSQL_ROOT_PASSWORD=root_password_123 -e MYSQL_DATABASE=cs2_server -e MYSQL_USER=cs2_admin -e MYSQL_PASSWORD=cs2_password_safe -p 3306:3306 -v /home/steam/mysql_data:/var/lib/mysql mysql:8.0
-
-# Verificacao de Restore do S3
-until sudo docker exec cs2-mysql mysqladmin ping -h 127.0.0.1 -u"cs2_admin" -p"cs2_password_safe" --silent; do
-    echo "Aguardando MySQL subir."
-    sleep 5
-done
-
-# Aguardar acesso ao S3
-until aws s3 ls "s3://${s3_bucket_name}" > /dev/null 2>&1; do
-    echo "Aguardando permissao do S3..."
-    sleep 5
-done
+until sudo docker exec cs2-mysql mysqladmin ping -h 127.0.0.1 -u"cs2_admin" -p"cs2_password_safe" --silent; do sleep 5; done
 
 LATEST_BACKUP=$(aws s3 ls s3://${s3_bucket_name}/ | sort | tail -n 1 | awk '{print $4}')
 if [ -n "$LATEST_BACKUP" ]; then
-    echo "Restaurando backup: $LATEST_BACKUP"
     aws s3 cp s3://${s3_bucket_name}/$LATEST_BACKUP /tmp/restore_db.sql
     docker exec -i cs2-mysql mysql -h 127.0.0.1 -u cs2_admin -pcs2_password_safe cs2_server < /tmp/restore_db.sql
-    rm -f /tmp/restore_db.sql
 fi
 
-# -----------------------------------------------------------------------#
-# Arquivos de Configuracao
-echo '{"FollowCS2ServerGuidelines": false}' | sudo -u steam tee "$CSS_DIR/configs/core.json"
-WP_CONFIG_DIR="$CSS_DIR/configs/plugins/WeaponPaints"
-sudo -u steam mkdir -p $WP_CONFIG_DIR
-cat <<PLUGINEOF | sudo -u steam tee $WP_CONFIG_DIR/WeaponPaints.json
-{
-    "Version": 4,
-    "DatabaseHost": "127.0.0.1",
-    "DatabasePort": 3306,
-    "DatabaseUser": "cs2_admin",
-    "DatabasePassword": "cs2_password_safe",
-    "DatabaseName": "cs2_server",
-    "Additional": { "KnifeEnabled": true, "SkinEnabled": true, "CommandSkin": ["ws"] }
-}
-PLUGINEOF
-
-# Identidade Steam
-sudo -u steam mkdir -p /home/steam/.steam/sdk64
-sudo -u steam mkdir -p $CS2_DIR/game/bin/linuxsteamrt64
-sudo -u steam cp /home/steam/steamcmd/linux64/steamclient.so /home/steam/.steam/sdk64/steamclient.so
-sudo -u steam cp /home/steam/steamcmd/linux64/steamclient.so $CS2_DIR/game/bin/linuxsteamrt64/steamclient.so
-sudo -u steam echo "730" > $CS2_DIR/game/bin/linuxsteamrt64/steam_appid.txt
-
-# -----------------------------------------------------------------------#
-# Script de inicializacao do servidor de cs
+# Scripts de Inicializacao
 cat <<EOF | sudo tee $USER_HOME/start_server.sh
 #!/bin/bash
 set -euo pipefail
 GSLT_TOKEN="${gslt_token}"
 SERVER_PASS="${server_password}"
-
-
-if [ -z "$GSLT_TOKEN" ] || [ $${#GSLT_TOKEN} -lt 20 ]; then
-  echo "ERRO: Token GSLT invalido ou curto demais"
-  exit 1
-fi
-
-export DOTNET_BUNDLE_EXTRACT_BASE_DIR=$USER_HOME/.net/extract
-export LD_LIBRARY_PATH="$CS2_DIR/game/bin/linuxsteamrt64:$${LD_LIBRARY_PATH:-}"
-cd $CS2_DIR/game/bin/linuxsteamrt64
+cd /home/steam/cs2_server/game/bin/linuxsteamrt64
+export LD_LIBRARY_PATH=".:$LD_LIBRARY_PATH"
 ./cs2 -dedicated -condebug -usercon -ip 0.0.0.0 -port 27015 +map de_mirage +sv_setsteamaccount "$GSLT_TOKEN" +sv_password "$SERVER_PASS" +log on +sv_logflush 1 +sv_logsdir logs
 EOF
 
-# Script de backup do banco de dados das skins
-cat <<EOF | sudo tee $USER_HOME/backup_db.sh
+cat <<'EOF' | sudo tee $USER_HOME/backup_db.sh
 #!/bin/bash
-set -euo pipefail
-S3_BUCKET="${s3_bucket_name}"
-TIMESTAMP=$$(date +%Y%m%d_%H%M%S)
-BACKUP_PATH="/home/steam/backup_cs2_$$TIMESTAMP.sql"
-docker exec cs2-mysql mysqldump --no-tablespaces --single-transaction --quick -h 127.0.0.1 -u cs2_admin -pcs2_password_safe cs2_server > "$$BACKUP_PATH"
-if [ -s "$$BACKUP_PATH" ]; then
-    aws s3 cp "$$BACKUP_PATH" "s3://$$S3_BUCKET/" --only-show-errors
-    rm -f "$$BACKUP_PATH"
-fi
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+docker exec cs2-mysql mysqldump -h 127.0.0.1 -u cs2_admin -pcs2_password_safe cs2_server > "/home/steam/backup_$TIMESTAMP.sql"
+aws s3 cp "/home/steam/backup_$TIMESTAMP.sql" "s3://${s3_bucket_name}/"
 EOF
 
-# permissões de arquivos
+sudo chmod +x $USER_HOME/*.sh && sudo chown steam:steam $USER_HOME/*.sh
 sudo -u steam mkdir -p $CSGO_DIR/logs
-sudo chmod +x $USER_HOME/*.sh
-sudo chown steam:steam $USER_HOME/*.sh
-sudo chmod -R 755 $CSGO_DIR/logs
 
-# Servico Systemd
+# Servico CS2
 cat <<EOF | sudo tee /etc/systemd/system/cs2.service
 [Unit]
 Description=Counter-Strike 2 Dedicated Server
 After=network-online.target docker.service
-Requires=docker.service
-
 [Service]
 Type=simple
 User=steam
 Group=steam
-TimeoutStopSec=120
 Environment="HOME=/home/steam"
 WorkingDirectory=/home/steam/cs2_server/game/bin/linuxsteamrt64
 ExecStart=/bin/bash /home/steam/start_server.sh
-ExecStop=/bin/bash /home/steam/backup_db.sh
+ExecStop=/bash /home/steam/backup_db.sh
 Restart=always
 RestartSec=15
-
 [Install]
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable cs2
-sudo systemctl start cs2
+sudo systemctl daemon-reload && sudo systemctl enable cs2 && sudo systemctl start cs2
 echo "Setup Finalizado com sucesso."
