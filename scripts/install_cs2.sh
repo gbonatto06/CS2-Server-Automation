@@ -19,9 +19,14 @@ USER_HOME="/home/steam"
 CS2_DIR="$USER_HOME/cs2_server"
 CSGO_DIR="$CS2_DIR/game/csgo"
 CSS_DIR="$CSGO_DIR/addons/counterstrikesharp"
+MON_DIR="$USER_HOME/monitoring"
+sudo -u steam mkdir -p $MON_DIR/prometheus $MON_DIR/promtail $MON_DIR/loki $MON_DIR/grafana
+sudo -u steam mkdir -p $CSGO_DIR/logs
+# Cria um arquivo vazio para garantir que o Promtail tenha o que ler e não reclame de wildcard vazio
+sudo -u steam touch $CSGO_DIR/console.log
 
 echo "Iniciando Stack de Observabilidade"
-MON_DIR="$USER_HOME/monitoring"
+
 sudo -u steam mkdir -p $MON_DIR/prometheus $MON_DIR/promtail $MON_DIR/loki $MON_DIR/grafana
 
 # Instalação das dependências do exportador de métricas do servidor
@@ -163,8 +168,12 @@ LOKICONFIG
 cat <<PROMTAIL | sudo -u steam tee $MON_DIR/promtail/config.yml
 server:
   http_listen_port: 9080
+  grpc_listen_port: 0
+positions:
+  filename: /tmp/positions.yaml
 clients:
   - url: http://localhost:3100/loki/api/v1/push
+
 scrape_configs:
   - job_name: infra_logs
     static_configs:
@@ -178,7 +187,7 @@ scrape_configs:
     - targets: [localhost]
       labels:
         job: cs2_console_logs
-        __path__: /home/steam/cs2_server/game/csgo/logs/*.log
+        __path__: /home/steam/cs2_server/game/csgo/console.log
 PROMTAIL
 
 # Configurar Loki e Prometheus como Data Sources
@@ -314,6 +323,48 @@ sed -i "s|SERVER_PASSWORD_PLACEHOLDER|$SERVER_PASS_VAR|g" "$MON_DIR/grafana/prov
 # Docker Compose com Network Host e Promtail Root
 cat <<DOCKERCOMPOSE | sudo -u steam tee $MON_DIR/docker-compose.yml
 services:
+  loki:
+    image: grafana/loki:2.9.2
+    network_mode: "host"
+    user: "0:0"
+    volumes: 
+      - "./loki/loki-config.yml:/etc/loki/local-config.yaml"
+      - "loki-data:/tmp/loki"
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: always
+    # Healthcheck para garantir que o Loki está pronto para receber logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  promtail:
+    image: grafana/promtail:2.9.2
+    network_mode: "host"
+    user: "0:0"
+    volumes:
+      - /var/log:/var/log
+      - ./promtail/config.yml:/etc/promtail/config.yml
+      - /home/steam/cs2_server/game/csgo:/home/steam/cs2_server/game/csgo
+      - promtail-positions:/tmp
+    restart: always
+    # Promtail só inicia DEPOIS que o Loki estiver "healthy"
+    depends_on:
+      loki:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    network_mode: "host"
+    volumes: ["./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"]
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   grafana:
     image: grafana/grafana:latest
     network_mode: "host"
@@ -324,30 +375,12 @@ services:
       - GF_PANELS_DISABLE_SANITIZE_HTML=true
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/definitions/cs2_server.json
     restart: always
-    
-  prometheus:
-    image: prom/prometheus:latest
-    network_mode: "host"
-    volumes: ["./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"]
-    restart: always
-    
-  loki:
-    image: grafana/loki:latest
-    network_mode: "host"
-    user: "0:0"
-    volumes: ["./loki/loki-config.yml:/etc/loki/local-config.yaml"]
-    command: -config.file=/etc/loki/local-config.yaml
-    restart: always
-
-  promtail:
-    image: grafana/promtail:latest
-    network_mode: "host"
-    user: "0:0"
-    volumes:
-      - /var/log:/var/log
-      - ./promtail/config.yml:/etc/promtail/config.yml
-      - /home/steam/cs2_server/game/csgo:/home/steam/cs2_server/game/csgo
-    restart: always
+    # Grafana sobe depois que Prometheus e Loki estiverem rodando
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
     
   node-exporter:
     image: prom/node-exporter:latest
@@ -361,11 +394,17 @@ services:
     volumes: ["./blackbox.yml:/config/blackbox.yml"]
     command: --config.file=/config/blackbox.yml
     restart: always
+
+volumes:
+  loki-data:
+  promtail-positions:
 DOCKERCOMPOSE
 
-# CORREÇÃO CRÍTICA: Ajuste de Permissões para que os Containers (Grafana/Prometheus) possam ler os arquivos
-# Grafana roda como user 472, Prometheus como 65534. chmod 777 garante acesso a leitura.
+# Cria os diretórios e dá permissão antes de subir o Docker
+sudo chown -R steam:steam $USER_HOME
 sudo chmod -R 777 $MON_DIR
+# Permissão na pasta de logs do jogo que criamos antecipadamente
+sudo chmod -R 777 $CSGO_DIR
 
 cd $MON_DIR && sudo docker compose up -d
 
@@ -383,6 +422,8 @@ sudo -u steam ./steamcmd.sh +force_install_dir $CS2_DIR +login anonymous +app_up
 
 # Ajuste de Permissoes Recursivas
 sudo chown -R steam:steam $USER_HOME/
+# Garante que o console.log seja legivel, após a atualização
+sudo chmod -R 755 $CSGO_DIR
 
 # Aguardar a criação real do gameinfo.gi
 echo "Aguardando a criação do arquivo gameinfo.gi pelo SteamCMD..."
