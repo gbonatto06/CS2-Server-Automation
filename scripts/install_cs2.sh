@@ -27,7 +27,7 @@ sudo -u steam $MON_DIR/venv/bin/pip install python-valve prometheus_client
 
 # Exporter de métricas
 cat <<'PYTHON_EXP' | sudo -u steam tee $MON_DIR/cs2_exporter.py
-import time, collections, collections.abc
+import time, collections, collections.abc, socket
 from prometheus_client import start_http_server, Gauge, Info
 
 if not hasattr(collections, 'Mapping'):
@@ -37,20 +37,24 @@ import valve.source.a2s
 SERVER_ADDRESS = ("127.0.0.1", 27015)
 EXPORTER_PORT = 9137
 
-cs2_up = Gauge('cs2_server_up', 'Status do servidor')
-cs2_players = Gauge('cs2_player_count', 'Contagem de jogadores')
-cs2_map = Info('cs2_current_map', 'Informacoes do mapa')
+hostname = socket.gethostname()
+cs2_up = Gauge('cs2_server_up', 'Status', ['server_name'])
+cs2_players = Gauge('cs2_player_count', 'Contagem de jogadores', ['server_name'])
+cs2_map = Info('cs2_current_map', 'Informacoes do mapa', ['server_name'])
 
 def fetch_metrics():
     try:
         with valve.source.a2s.ServerQuerier(SERVER_ADDRESS, timeout=5) as server:
             info = server.info()
-            cs2_up.set(1)
-            cs2_players.set(info["player_count"])
-            cs2_map.info({'map_name': info["map"]})
+            
+            cs2_up.labels(server_name=hostname).set(1)
+            cs2_players.labels(server_name=hostname).set(info["player_count"])
+            cs2_map.labels(server_name=hostname).info({'map_name': info["map"]})
+
     except Exception as e:
-        cs2_up.set(0)
-        cs2_players.set(0)
+
+        cs2_up.labels(server_name=hostname).set(0)
+        cs2_players.labels(server_name=hostname).set(0)
 
 if __name__ == '__main__':
     start_http_server(EXPORTER_PORT)
@@ -88,6 +92,8 @@ scrape_configs:
   - job_name: 'sistema'
     static_configs:
       - targets: ['127.0.0.1:9100']
+      labels:
+        server_name: '$(hostname) # Identifica o servidor para a arquitetura horizontal
 
   - job_name: 'cs2_game'
     static_configs:
@@ -99,6 +105,8 @@ scrape_configs:
       module: [icmp]
     static_configs:
       - targets: ['127.0.0.1']
+      labels:
+          server_name: '$(hostname)'
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -121,13 +129,14 @@ cat <<PROMTAIL | sudo -u steam tee $MON_DIR/promtail/config.yml
 server:
   http_listen_port: 9080
 clients:
-  - url: http://loki:3100/loki/api/v1/push
+  - url: http://localhost:3100/loki/api/v1/push
 scrape_configs:
   - job_name: infra_logs
     static_configs:
     - targets: [localhost]
       labels:
         job: installation_logs
+        instance: '$(hostname)'
         __path__: /var/log/user-data.log
 
   - job_name: game_logs
@@ -136,6 +145,7 @@ scrape_configs:
       labels:
         job: cs2_console_logs
         # Mapeia logs do console e do CounterStrikeSharp
+        instance: '$(hostname)'
         __path__: /home/steam/cs2_server/game/csgo/logs/*.log
 PROMTAIL
 
@@ -179,9 +189,23 @@ DASHPROV
 cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json
 {
   "editable": true,
+  "refresh": "5s",
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "links": [],
+  "templating": {
+    "list": [
+      {
+        "name": "server",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "Prometheus" },
+        "definition": "label_values(cs2_server_up, server_name)",
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
   "panels": [
     {
       "title": "Status do Servidor",
@@ -189,7 +213,7 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "cs2_server_up", "format": "table", "refId": "A" }
+        { "expr": "cs2_server_up{server_name=\"$server\"}", "format": "table", "refId": "A" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -239,11 +263,11 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
     {
       "title": "Mapa & Players",
       "type": "stat",
-      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "cs2_player_count", "legendFormat": "Jogadores", "refId": "A" },
-        { "expr": "cs2_current_map_info", "legendFormat": "{{map_name}}", "refId": "B" }
+        { "expr": "cs2_player_count{server_name=\"$server\"}", "legendFormat": "Jogadores", "refId": "A" },
+        { "expr": "cs2_current_map_info{server_name=\"$server\"}", "legendFormat": "{{map_name}}", "refId": "B" }
       ],
       "options": {
         "textMode": "value_and_name",
@@ -256,39 +280,39 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
     {
       "title": "Ping & Loss",
       "type": "stat",
-      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "avg_over_time(probe_duration_seconds[5m]) * 1000", "legendFormat": "Ping (ms)" },
-        { "expr": "(1 - avg_over_time(probe_success[5m])) * 100", "legendFormat": "Loss (%)" }
+        { "expr": "avg_over_time(probe_duration_seconds{instance=~\"$server:.*\"}[5m]) * 1000", "legendFormat": "Ping (ms)" },
+        { "expr": "(1 - avg_over_time(probe_success{instance=~\"$server:.*\"}[5m])) * 100", "legendFormat": "Loss (%)" }
       ],
       "options": { "graphMode": "area", "justifyMode": "center" }
     },
     {
       "title": "Recursos da Infraestrutura",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)", "legendFormat": "CPU %" },
-        { "expr": "((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes) * 100", "legendFormat": "RAM %" }
+        { "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode='idle', instance=~\"$server:.*\"}[5m])) * 100)", "legendFormat": "CPU %" },
+        { "expr": "((node_memory_MemTotal_bytes{instance=~\"$server:.*\"} - node_memory_MemAvailable_bytes{instance=~\"$server:.*\"}) / node_memory_MemTotal_bytes{instance=~\"$server:.*\"}) * 100", "legendFormat": "RAM %" }
       ],
       "options": { "legend": { "displayMode": "table", "placement": "right" } }
     },
     {
       "title": "Terminal da Infraestrutura",
       "type": "logs",
-      "gridPos": { "h": 14, "w": 12, "x": 0, "y": 6 },
+      "gridPos": { "h": 14, "w": 12, "x": 0, "y": 10 },
       "datasource": { "type": "loki", "uid": "Loki" },
-      "targets": [ { "expr": "{job=\"installation_logs\"}" } ],
+      "targets": [ { "expr": "{job=\"installation_logs\", instance=\"$server\"}" } ],
       "options": { "sortOrder": "Descending", "showTime": true, "wrapLogMessage": true }
     },
     {
       "title": "Terminal do Servidor",
       "type": "logs",
-      "gridPos": { "h": 14, "w": 12, "x": 12, "y": 6 },
+      "gridPos": { "h": 14, "w": 12, "x": 12, "y": 10 },
       "datasource": { "type": "loki", "uid": "Loki" },
-      "targets": [ { "expr": "{job=\"cs2_console_logs\"}" } ],
+      "targets": [ { "expr": "{job=\"cs2_console_logs\", instance=\"$server\"}" } ],
       "options": { "sortOrder": "Descending", "showTime": true, "wrapLogMessage": true }
     }
   ],
@@ -402,12 +426,18 @@ sudo chown -R steam:steam $CS2_DIR
 sudo chmod -R 755 $CS2_DIR
 
 
+
 # Instalacao do Metamod
 echo "Buscando versao mais recente do metamod"
 LATEST_METAMOD_FILE=$(curl -s https://mms.alliedmods.net/mmsdrop/2.0/mmsource-latest-linux)
 METAMOD_URL="https://mms.alliedmods.net/mmsdrop/2.0/$LATEST_METAMOD_FILE"
 sudo -u steam wget $METAMOD_URL -O /tmp/metamod.tar.gz
 sudo -u steam tar -xzvf /tmp/metamod.tar.gz -C $CSGO_DIR
+
+until [ -f "$CSGO_DIR/gameinfo.gi" ]; do
+  echo "Aguardando os arquivos base do jogo."
+  sleep 10
+done
 
 # Alteracao do gameinfo.gi do metamod
 if ! grep -q "csgo/addons/metamod" $CSGO_DIR/gameinfo.gi; then
@@ -512,7 +542,7 @@ fi
 export DOTNET_BUNDLE_EXTRACT_BASE_DIR=$USER_HOME/.net/extract
 export LD_LIBRARY_PATH="$CS2_DIR/game/bin/linuxsteamrt64:$${LD_LIBRARY_PATH:-}"
 cd $CS2_DIR/game/bin/linuxsteamrt64
-./cs2 -dedicated -condebug -usercon -ip 0.0.0.0 -port 27015 +map de_dust2 +sv_setsteamaccount "$GSLT_TOKEN" +sv_password "$SERVER_PASS" +rcon_password "${server_password}" +log on +sv_logflush 1 +sv_logsdir logs
+./cs2 -dedicated -condebug -usercon -ip 0.0.0.0 -port 27015 +map de_mirage +sv_setsteamaccount "$GSLT_TOKEN" +sv_password "$SERVER_PASS" +log on +sv_logflush 1 +sv_logsdir logs
 EOF
 
 # Script de backup do banco de dados das skins
