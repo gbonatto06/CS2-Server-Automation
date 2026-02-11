@@ -9,8 +9,9 @@ SERVER_PASS_VAR="${server_password}"
 echo "Provisionamento e configuracao do servidor de cs2"
 
 # Dependencias do Sistema
+# Precisamos das bibliotecas de som/audio pois caso não estejam presentes o cservidor linux vai dar acesso indevido da memoria
 sudo apt-get update
-sudo apt-get install -y lib32gcc-s1 lib32stdc++6 curl tar unzip wget jq dotnet-runtime-8.0 docker.io docker-compose-v2 awscli python3-pip python3-venv
+sudo apt-get install -y lib32gcc-s1 lib32stdc++6 curl tar unzip wget jq dotnet-runtime-8.0 docker.io docker-compose-v2 awscli python3-pip python3-venv libpulse0 libpulse-dev libnss3 libnspr4 libtinfo6 libsdl2-2.0-0
 
 # Configuracao do Usuario steam e Variaveis de Caminho
 sudo useradd -m steam || true
@@ -422,7 +423,8 @@ sudo -u steam ./steamcmd.sh +force_install_dir $CS2_DIR +login anonymous +app_up
 
 echo "Criando link simbólico para steamclient.so..."
 sudo -u steam mkdir -p /home/steam/.steam/sdk64
-sudo -u steam ln -s /home/steam/cs2_server/linux64/steamclient.so /home/steam/.steam/sdk64/steamclient.so
+# o steamclient é mapeado na pasta steamcmd e nao dentro da pasta do servidor
+sudo -u steam ln -s /home/steam/steamcmd/linux64/steamclient.so /home/steam/.steam/sdk64/steamclient.so
 
 # Ajuste de Permissoes Recursivas
 sudo chown -R steam:steam $USER_HOME/
@@ -514,7 +516,7 @@ Group=steam
 Environment="HOME=/home/steam"
 WorkingDirectory=/home/steam/cs2_server/game/bin/linuxsteamrt64
 ExecStart=/bin/bash /home/steam/start_server.sh
-ExecStop=/bash /home/steam/backup_db.sh
+ExecStop=/bin/bash /home/steam/backup_db.sh
 Restart=always
 RestartSec=15
 [Install]
