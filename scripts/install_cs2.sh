@@ -192,19 +192,19 @@ PROMTAIL
 
 # Configurar Loki e Prometheus como Data Sources
 sudo -u steam mkdir -p $MON_DIR/grafana/provisioning/datasources
-# CORREÇÃO: Adicionados UIDs explícitos para garantir link com o Dashboard
+
 cat <<DATASOURCES | sudo -u steam tee $MON_DIR/grafana/provisioning/datasources/ds.yaml
 apiVersion: 1
 datasources:
   - name: Loki
     type: loki
-    uid: Loki
+    uid: Loki # UIDs explícitos para garantir link com o Dashboard
     access: proxy
     url: http://localhost:3100
     isDefault: false
   - name: Prometheus
     type: prometheus
-    uid: Prometheus
+    uid: Prometheus # UIDs explícitos para garantir link com o Dashboard
     access: proxy
     url: http://localhost:9090
     isDefault: true
@@ -224,7 +224,6 @@ providers:
 DASHPROV
 
 # JSON do Dashboard
-# CORREÇÃO: Substituido ${server_password} por PLACEHOLDER para evitar erro de sintaxe no cat <<'EOF'
 cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json
 {
   "editable": true,
@@ -420,6 +419,11 @@ cd $USER_HOME/steamcmd
 sudo -u steam curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | sudo -u steam tar zxvf -
 sudo -u steam ./steamcmd.sh +force_install_dir $CS2_DIR +login anonymous +app_update 730 validate +quit
 
+
+echo "Criando link simbólico para steamclient.so..."
+sudo -u steam mkdir -p /home/steam/.steam/sdk64
+sudo -u steam ln -s /home/steam/cs2_server/linux64/steamclient.so /home/steam/.steam/sdk64/steamclient.so
+
 # Ajuste de Permissoes Recursivas
 sudo chown -R steam:steam $USER_HOME/
 # Garante que o console.log seja legivel, após a atualização
@@ -472,13 +476,19 @@ if [ -n "$LATEST_BACKUP" ]; then
 fi
 
 # Scripts de Inicializacao
-cat <<EOF | sudo tee $USER_HOME/start_server.sh
+cat <<'EOF' | sudo tee $USER_HOME/start_server.sh
 #!/bin/bash
 set -euo pipefail
+
+# Terraform injeta os valores aqui
 GSLT_TOKEN="${gslt_token}"
 SERVER_PASS="${server_password}"
+
 cd /home/steam/cs2_server/game/bin/linuxsteamrt64
-export LD_LIBRARY_PATH=".:$LD_LIBRARY_PATH"
+
+export LD_LIBRARY_PATH=".:$${LD_LIBRARY_PATH:-}"
+
+# Usamos as variáveis definidas no início deste arquivo
 ./cs2 -dedicated -condebug -usercon -ip 0.0.0.0 -port 27015 +map de_mirage +sv_setsteamaccount "$GSLT_TOKEN" +sv_password "$SERVER_PASS" +log on +sv_logflush 1 +sv_logsdir logs
 EOF
 
