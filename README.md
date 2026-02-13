@@ -63,7 +63,7 @@ It automatically downloads the latest versions of commonly used plugins and reso
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/YOUR_USER/CS2-Server-Automation.git](https://github.com/YOUR_USER/CS2-Server-Automation.git)
+    git clone [https://github.com/gbonatto06/CS2-Server-Automation.git](https://github.com/gbonatto06/CS2-Server-Automation.git)
     cd CS2-Server-Automation
     ```
 
@@ -181,7 +181,7 @@ Ele baixa automaticamente as versões mais recentes dos plugins mais utilizados 
 
 1.  **Clone o repositório:**
     ```bash
-    git clone [https://github.com/SEU_USUARIO/CS2-Server-Automation.git](https://github.com/SEU_USUARIO/CS2-Server-Automation.git)
+    git clone [https://github.com/gbonatto06/CS2-Server-Automation.git](https://github.com/gbonatto06/CS2-Server-Automation.git)
     cd CS2-Server-Automation
     ```
 
