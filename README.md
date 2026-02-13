@@ -23,8 +23,6 @@
 
 This project implements a complete and **secure** infrastructure for hosting a Counter-Strike 2 server on AWS. Using **Infrastructure as Code (IaC)**, the project provisions not only the game server but also a full monitoring stack featuring a stateless architecture with data persistence.
 
-
-
 ### Overview
 
 #### Security
@@ -44,12 +42,14 @@ The server launches with a pre-configured Docker monitoring stack:
 * **Prometheus:** Real-time CPU, RAM, Network, and *Players Online* metrics.
 * **Loki & Promtail:** Log ingestion. You can read the server console and installation logs directly in Grafana, without needing SSH.
 
-#### Plugin Configuration
-The provisioned server automatically downloads the latest versions of commonly used plugins. Furthermore, it resolves the classic conflict between plugins that interfere with CVARs and server variables through custom boot logic:
-* **Competitive Mode (Default):** Managed by **MatchZy**.
-* **Retake Mode:** Managed by **CS2-Retakes**.
-* **Switching:** Players can type `!retake` or `!match` in chat. The server unloads conflicting plugins, modifies CVARs, and restarts the map automatically for a clean transition.
+#### Plugin Configuration & Technologies
+The server runs on **[Metamod:Source](https://www.sourcemm.net/)** and **[CounterStrikeSharp](https://github.com/roflmuffin/CounterStrikeSharp)**.
+It automatically downloads the latest versions of commonly used plugins and resolves the conflicts between Retakes and competitive modes through custom boot logic:
 
+* **Competitive Mode (Default):** Managed by **[MatchZy](https://github.com/shobhit-pathak/MatchZy)**.
+* **Retake Mode:** Managed by **[CS2-Retakes](https://github.com/B3none/cs2-retakes)**.
+* **Switching:** Managed by **[CustomCommands](https://github.com/HerrMagiic/CSS-CreateCustomCommands)**. Players can type `!retake` or `!match` in chat. The server unloads conflicting plugins, modifies CVARs, and restarts the map automatically.
+* **Skins** Managed by **[WeaponPaints](https://github.com/Nereziel/cs2-WeaponPaints)
 ---
 
 ### Usage
@@ -90,6 +90,13 @@ The provisioned server automatically downloads the latest versions of commonly u
 After the `terraform apply` command, the server IP will be displayed in the terminal.
 The entire monitoring stack may take 1 to 3 minutes to come up; do not worry if the connection is initially rejected.
 Access it in your browser using the command provided by Terraform (Login restricted to your IP).
+
+#### Destroying the Server
+To tear down the infrastructure and stop EC2 billing:
+```bash
+terraform destroy
+```
+The shutdown process automatically triggers the backup script via Systemd. The database will be uploaded to S3 before the instance is terminated. The S3 Bucket itself **is not deleted**, ensuring data persistence for the next run.
 
 ---
 
@@ -153,12 +160,14 @@ O servidor sobe com uma stack Docker de monitoramento pré-configurada:
 * **Prometheus:** Métricas de CPU, RAM, Rede e *Players Online* em tempo real.
 * **Loki & Promtail:** Ingestão de logs. Você pode ler o console do servidor e logs de instalação direto no Grafana, sem precisar de SSH.
 
-#### Configuração dos plugins
-O servidor provisionado realiza automaticamente o download mais recente dos plugins comumente utilizados, além disso o servidor resolve o conflito clássico entre plugins que interferem com cvars e alteração de variáveis do servidor através de uma lógica customizada de boot:
-* **Modo Competitivo (Padrão):** Gerenciado pelo **MatchZy**.
-* **Modo Retake:** Gerenciado pelo **CS2-Retakes**.
-* **Troca:** Jogadores podem digitar `!retake` ou `!match` no chat. O servidor descarrega os plugins conflitantes, altera as CVARs e reinicia o mapa automaticamente para uma transição limpa.
+#### Configuração de Plugins e Tecnologias
+O servidor roda sobre **[Metamod:Source](https://www.sourcemm.net/)** e **[CounterStrikeSharp](https://github.com/roflmuffin/CounterStrikeSharp)**.
+Ele baixa automaticamente as versões mais recentes dos plugins mais utilizados e resolve conflitos entre os modos Retake e Competitivo através de uma lógica de inicialização personalizada:
 
+* **Modo Competitivo (Padrão):** Gerenciado pelo **[MatchZy](https://github.com/shobhit-pathak/MatchZy)**.
+* **Modo Retake:** Gerenciado pelo **[CS2-Retakes](https://github.com/B3none/cs2-retakes)**.
+* **Troca:** Gerenciada pelo **[CustomCommands](https://github.com/HerrMagiic/CSS-CreateCustomCommands)**. Jogadores podem digitar `!retake` ou `!match` no chat. O servidor descarrega plugins conflitantes, altera CVARs e reinicia o mapa automaticamente.
+* **Skins:** Gerenciadas pelo **[WeaponPaints](https://github.com/Nereziel/cs2-WeaponPaints)**.
 ---
 
 ### Como Usar
@@ -199,6 +208,13 @@ O servidor provisionado realiza automaticamente o download mais recente dos plug
 Após o comando `terraform apply`, o IP do servidor será exibido no terminal.
 Toda a stack de monitoramento pode demorar de 1 a 3 minutos para subir, não se preocupe com a conexão rejeitada.
 Acesse no seu navegador com o comando fornecido pelo terraform (Login restrito ao seu IP).
+
+#### Destruindo o servidor
+Para encerrar a infraestrutura e parar a cobrança da EC2:
+```bash
+terraform destroy
+```
+O processo de desligamento aciona automaticamente o script de backup via Systemd. O banco de dados será salvo no S3 antes da máquina ser terminada. O Bucket S3 **não será excluído**, garantindo os dados de configuração das skins persistam para a próxima vez que subir o servidor.
 
 ---
 
