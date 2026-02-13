@@ -10,3 +10,10 @@ project_name = "meu-servidor-cs2"
 # GSLT Token (AppID 730) 
 # Obtenha o seu em: https://steamcommunity.com/dev/managegameservers
 cs2_gslt_token = "COLE_SEU_TOKEN_AQUI"
+
+# Sua senha do servidor, caso fique em branco, o servidor vai ser público.
+# Recomendado colocar senha, pois o servidor fornece admin no plugin do MatchZy para todos os usuários
+cs2_server_password = "minhasenha123"
+
+# Senha do banco de dados que contém a configuração das skins
+db_password = "senhadodb123"

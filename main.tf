@@ -179,6 +179,7 @@ resource "aws_s3_object" "install_script" {
     gslt_token      = trimspace(var.cs2_gslt_token)
     s3_bucket_name  = local.bucket_name
     server_password = var.cs2_server_password
+    db_password     = var.db_password
   })
   content_type = "text/x-shellscript"
   depends_on   = [null_resource.cs2_backups_setup]

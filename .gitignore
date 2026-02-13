@@ -13,3 +13,6 @@
 
 # Segredos e variáveis locais
 .env
+
+# Arquivos de SSH
+.pem

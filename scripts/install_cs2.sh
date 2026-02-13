@@ -5,6 +5,7 @@ sudo chmod 644 /var/log/user-data.log
 
 # Garante que a senha venha do Terraform para uma variavel global do shell
 SERVER_PASS_VAR="${server_password}"
+DB_PASS_VAR="${db_password}"
 
 echo "Provisionamento e configuracao do servidor de cs2"
 
@@ -57,12 +58,13 @@ def fetch_metrics():
             info = server.info()
             cs2_up.set(1)
             cs2_players.set(info["player_count"])
-            # Garante compatibilidade com diferentes versoes da lib valve
             map_name = info.get("map_name", info.get("map", "Unknown"))
             cs2_map.info({'map_name': map_name})
     except Exception as e:
+        # Se der erro na conexao, zera os players e define mapa como Offline
         cs2_up.set(0)
         cs2_players.set(0)
+        cs2_map.info({'map_name': 'Offline'})
 
 if __name__ == '__main__':
     start_http_server(EXPORTER_PORT)
@@ -182,6 +184,11 @@ scrape_configs:
       labels:
         job: installation_logs
         __path__: /var/log/user-data.log
+    - targets: [localhost]
+    # Captura os logs do sistema
+      labels:
+        job: installation_logs   # Mesma Label para aparecer no mesmo painel
+        __path__: /var/log/syslog
 
   - job_name: game_logs
     static_configs:
@@ -259,15 +266,39 @@ cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/de
       }
     },
     {
-      "title": "Mapa & Players",
+      "title": "Jogadores Online",
       "type": "stat",
-      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 4 },
+      "gridPos": { "h": 6, "w": 3, "x": 0, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "cs2_player_count", "legendFormat": "Jogadores", "refId": "A" },
-        { "expr": "cs2_current_map_info", "legendFormat": "{{map_name}}", "refId": "B" }
+        { "expr": "cs2_player_count", "legendFormat": "Players", "refId": "A" }
       ],
-      "options": { "textMode": "value_and_name", "reduceOptions": { "values": false, "calcs": ["last"], "fields": "/^Jogadores$|^map_name$/" } }
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "reduceOptions": { "values": false, "calcs": ["last"] } }
+    },
+    {
+      "title": "Mapa Atual",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 3, "x": 3, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "cs2_current_map_info", "legendFormat": "{{map_name}}", "refId": "B", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "#663399" },
+          "mappings": [
+            { "type": "regex", "options": { "pattern": "Offline", "result": { "color": "red", "text": "OFFLINE" } } },
+            { "type": "regex", "options": { "pattern": "^(?!Offline).+$", "result": { "color": "#5794F2", "text": "" } } }
+          ]
+        }
+      },
+      "options": { 
+        "textMode": "name", 
+        "colorMode": "background", 
+        "graphMode": "none", 
+        "justifyMode": "center", 
+        "reduceOptions": { "values": false, "calcs": ["last"] } 
+      }
     },
     {
       "title": "Ping & Loss",
@@ -452,29 +483,138 @@ fi
 CSS_URL=$(curl -s https://api.github.com/repos/roflmuffin/CounterStrikeSharp/releases/latest | jq -r '.assets[] | select(.name | contains("with-runtime") and contains("linux")) | .browser_download_url')
 sudo -u steam wget $CSS_URL -O /tmp/css.zip && sudo -u steam unzip -o /tmp/css.zip -d $CSGO_DIR
 
+# Renomeia o exemplo para fazer a troca do guideline depois
+if [ ! -f "$CSS_DIR/configs/core.json" ] && [ -f "$CSS_DIR/configs/core.example.json" ]; then
+    sudo -u steam cp "$CSS_DIR/configs/core.example.json" "$CSS_DIR/configs/core.json"
+fi
+# sed para trocar true por false na diretiva de guidelines
+sudo -u steam sed -i 's/"FollowCS2ServerGuidelines": true/"FollowCS2ServerGuidelines": false/g' "$CSS_DIR/configs/core.json"
+
+
 for plugin in AnyBaseLib PlayerSettings MenuManager; do
     URL=$(curl -s "https://api.github.com/repos/NickFox007/""$plugin""CS2/releases/latest" | jq -r ".assets[] | select(.name == \"$plugin.zip\") | .browser_download_url")
     sudo -u steam wget $URL -O /tmp/$plugin.zip && sudo -u steam unzip -o /tmp/$plugin.zip -d $CSGO_DIR
 done
 
-# MatchZy e WeaponPaints
+# MatchZy
 MATCHZY_URL=$(curl -s https://api.github.com/repos/shobhit-pathak/MatchZy/releases/latest | jq -r '.assets[] | select(.name | startswith("MatchZy-") and endswith(".zip") and (contains("with-cssharp") | not)) | .browser_download_url')
 sudo -u steam wget $MATCHZY_URL -O /tmp/matchzy.zip && sudo -u steam unzip -o /tmp/matchzy.zip -d $CSGO_DIR
 
+# Altera config.cfg já extraído pelo zip para dar admin a todos
+sudo -u steam sed -i 's/matchzy_everyone_is_admin false/matchzy_everyone_is_admin true/' $CSGO_DIR/cfg/MatchZy/config.cfg
+
+# WeaponPaints
 WEAPONPAINTS_URL=$(curl -s https://api.github.com/repos/Nereziel/cs2-WeaponPaints/releases/latest | jq -r '.assets[] | select(.name == "WeaponPaints.zip") | .browser_download_url')
 sudo -u steam wget $WEAPONPAINTS_URL -O /tmp/weaponpaints.zip
 sudo -u steam mkdir -p /tmp/wp_temp && sudo -u steam unzip -o /tmp/weaponpaints.zip -d /tmp/wp_temp
 sudo -u steam cp -rf /tmp/wp_temp/WeaponPaints $CSS_DIR/plugins/
 sudo -u steam cp -rf /tmp/wp_temp/gamedata/* $CSS_DIR/gamedata/
 
+# Cria a estrutura de pastas de configuração antes de criar o arquivo
+sudo -u steam mkdir -p "$CSS_DIR/configs/plugins/WeaponPaints"
+
+# Gera o arquivo WeaponPaints.json com as credenciais do banco injetadas
+cat <<EOF | sudo -u steam tee "$CSS_DIR/configs/plugins/WeaponPaints/WeaponPaints.json"
+{
+	"Version": 4,
+	"DatabaseHost": "127.0.0.1",
+	"DatabasePort": 3306,
+	"DatabaseUser": "cs2_admin",
+	"DatabasePassword": "$DB_PASS_VAR",
+	"DatabaseName": "cs2_server",
+	"CmdRefreshCooldownSeconds": 15,
+	"Prefix": "[WeaponPaints]",
+	"Website": "",
+    "Messages": {
+        "WebsiteMessageCommand": "Visit {WEBSITE} where you can change skins.",
+        "SynchronizeMessageCommand": "Type !wp to synchronize chosen skins.",
+        "KnifeMessageCommand": "Type !knife to open knife menu.",
+        "CooldownRefreshCommand": "You can\u0027t refresh weapon paints right now.",
+        "SuccessRefreshCommand": "Refreshing weapon paints.",
+        "ChosenKnifeMenu": "You have chosen {KNIFE} as your knife.",
+        "ChosenSkinMenu": "You have chosen {SKIN} as your skin.",
+        "ChosenKnifeMenuKill": "To correctly apply skin for knife, you need to type !kill.",
+        "KnifeMenuTitle": "Knife Menu.",
+        "WeaponMenuTitle": "Weapon Menu.",
+        "SkinMenuTitle": "Select skin for {WEAPON}"
+    },
+    "Additional": {
+        "KnifeEnabled": true,
+        "SkinEnabled": true,
+        "CommandWpEnabled": true,
+        "CommandKillEnabled": true,
+        "CommandKnife": ["knife"],
+        "CommandSkin": ["ws"],
+        "CommandSkinSelection": ["skins"],
+        "CommandRefresh": ["wp"],
+        "CommandKill": ["kill"],
+        "GiveRandomKnife": false,
+        "GiveRandomSkins": false
+    }
+}
+EOF
+
+# Plugin de retake
+RETAKES_URL=$(curl -s https://api.github.com/repos/B3none/cs2-retakes/releases/latest | jq -r '.assets[] | select(.name | startswith("RetakesPlugin-") and (contains("no-map-configs") | not)) | .browser_download_url')
+sudo -u steam wget $RETAKES_URL -O /tmp/retakes.zip
+sudo -u steam unzip -o /tmp/retakes.zip -d $CSGO_DIR/
+
+
+# Custom Commands para gerenciar a transição de matchzy e o plugin de retake
+CC_URL=$(curl -s https://api.github.com/repos/HerrMagiic/CSS-CreateCustomCommands/releases/latest | jq -r '.assets[] | select(.name == "CustomCommands.zip") | .browser_download_url')
+sudo -u steam mkdir -p "$CSS_DIR/plugins/CustomCommands"
+sudo -u steam wget $CC_URL -O /tmp/customcommands.zip
+sudo -u steam unzip -o /tmp/customcommands.zip -d "$CSS_DIR/plugins/CustomCommands/"
+
+sudo -u steam mkdir -p "$CSS_DIR/plugins/CustomCommands/Commands"
+
+cat <<EOF | sudo -u steam tee "$CSS_DIR/plugins/CustomCommands/Commands/PublicModes.json"
+[
+  {
+    "Title": "Modo Retake",
+    "Command": "retake",
+    "Message": "{GREEN}>>> RETAKE",
+    "ServerCommands": [
+      "css_plugins unload MatchZy",
+      "css_plugins load RetakesPlugin",
+      "map de_mirage"
+    ],
+    "Permission": { "RequiresAllPermissions": false, "PermissionList": [] }
+  },
+  {
+    "Title": "Modo Match",
+    "Command": "match",
+    "Message": "{RED}>>> COMPETITIVO",
+    "ServerCommands": [
+      "css_plugins unload RetakesPlugin",
+      "css_plugins load MatchZy",
+      "map de_mirage"
+    ],
+    "Permission": { "RequiresAllPermissions": false, "PermissionList": [] }
+  }
+]
+EOF
+
+# Configuração de inicialização para garantir plugin load order
+# Define MatchZy como padrão e descarrega Retakes para evitar conflito no boot
+# Carrega MatchZy e mata Retakes apenas no boot do processo
+cat <<EOF | sudo -u steam tee $CSGO_DIR/cfg/autoexec.cfg
+css_plugins unload RetakesPlugin
+css_plugins load MatchZy
+EOF
+
+# Permissões nas pastas dos plugins
+sudo chown -R steam:steam "$CSGO_DIR/addons/counterstrikesharp"
+
+
 # Configuracao DB e Restore
-sudo docker run -d --name cs2-mysql --restart always -e MYSQL_ROOT_PASSWORD=root_password_123 -e MYSQL_DATABASE=cs2_server -e MYSQL_USER=cs2_admin -e MYSQL_PASSWORD=cs2_password_safe -p 3306:3306 -v /home/steam/mysql_data:/var/lib/mysql mysql:8.0
-until sudo docker exec cs2-mysql mysqladmin ping -h 127.0.0.1 -u"cs2_admin" -p"cs2_password_safe" --silent; do sleep 5; done
+sudo docker run -d --name cs2-mysql --restart always -e MYSQL_ROOT_PASSWORD=$DB_PASS_VAR -e MYSQL_DATABASE=cs2_server -e MYSQL_USER=cs2_admin -e MYSQL_PASSWORD=$DB_PASS_VAR -p 3306:3306 -v /home/steam/mysql_data:/var/lib/mysql mysql:8.0
+until sudo docker exec cs2-mysql mysqladmin ping -h 127.0.0.1 -u"cs2_admin" -p"$DB_PASS_VAR" --silent; do sleep 5; done
 
 LATEST_BACKUP=$(aws s3 ls s3://${s3_bucket_name}/ | sort | tail -n 1 | awk '{print $4}')
 if [ -n "$LATEST_BACKUP" ]; then
     aws s3 cp s3://${s3_bucket_name}/$LATEST_BACKUP /tmp/restore_db.sql
-    docker exec -i cs2-mysql mysql -h 127.0.0.1 -u cs2_admin -pcs2_password_safe cs2_server < /tmp/restore_db.sql
+    docker exec -i cs2-mysql mysql -h 127.0.0.1 -u cs2_admin -p$DB_PASS_VAR cs2_server < /tmp/restore_db.sql
 fi
 
 # Scripts de Inicializacao
@@ -491,14 +631,16 @@ cd /home/steam/cs2_server/game/bin/linuxsteamrt64
 export LD_LIBRARY_PATH=".:$${LD_LIBRARY_PATH:-}"
 
 # Usamos as variáveis definidas no início deste arquivo
-./cs2 -dedicated -condebug -usercon -ip 0.0.0.0 -port 27015 +map de_mirage +sv_setsteamaccount "$GSLT_TOKEN" +sv_password "$SERVER_PASS" +log on +sv_logflush 1 +sv_logsdir logs
+./cs2 -dedicated -usercon -ip 0.0.0.0 -port 27015 +map de_mirage +sv_setsteamaccount "$GSLT_TOKEN" +sv_password "$SERVER_PASS" +log on +sv_logflush 1 +sv_logsdir logs > /home/steam/cs2_server/game/csgo/console.log 2>&1
 EOF
 
-cat <<'EOF' | sudo tee $USER_HOME/backup_db.sh
+cat <<EOF | sudo tee $USER_HOME/backup_db.sh
 #!/bin/bash
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-docker exec cs2-mysql mysqldump -h 127.0.0.1 -u cs2_admin -pcs2_password_safe cs2_server > "/home/steam/backup_$TIMESTAMP.sql"
-aws s3 cp "/home/steam/backup_$TIMESTAMP.sql" "s3://${s3_bucket_name}/"
+BACKUP_NAME="cs2_server_dump.sql"
+LOCAL_PATH="/home/steam/\$BACKUP_NAME"
+
+docker exec cs2-mysql mysqldump -h 127.0.0.1 -u cs2_admin -p$DB_PASS_VAR cs2_server > "\$LOCAL_PATH"
+aws s3 cp "\$LOCAL_PATH" "s3://${s3_bucket_name}/\$BACKUP_NAME"
 EOF
 
 sudo chmod +x $USER_HOME/*.sh && sudo chown steam:steam $USER_HOME/*.sh
