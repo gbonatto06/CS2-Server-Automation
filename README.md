@@ -117,6 +117,7 @@ Other usable commands belong to their respective plugins (MatchZy, WeaponPaints)
 ├── terraform.tfvars       # (GitIgnored) File where you insert your actual passwords and tokens
 └── scripts/
     └── install_cs2.sh     # Automation script: Installs Monitoring, SteamCMD, CS2, Plugins, etc.
+```
 
 <br>
 <div align="center">
