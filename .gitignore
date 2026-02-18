@@ -16,3 +16,6 @@
 
 # Arquivos de SSH
 *.pem
+
+# ZIP Archives
+*.zip
