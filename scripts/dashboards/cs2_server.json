@@ -1,0 +1,157 @@
+{
+  "editable": true,
+  "refresh": "5s",
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Status do Servidor",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [ { "expr": "cs2_server_up", "format": "table", "refId": "A" } ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "OFFLINE", "color": "#c93636" }, "1": { "text": "ONLINE", "color": "#4b9e59" } } },
+            { "type": "special", "options": { "match": "null", "result": { "text": "INSTALLING", "color": "#de9b35" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 80 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "noDataText": "LOADING...", "textMode": "value", "reduceOptions": { "calcs": ["last"], "values": false } }
+    },
+    {
+      "title": "Conexão Rápida",
+      "type": "text",
+      "gridPos": { "h": 4, "w": 18, "x": 6, "y": 0 },
+      "options": {
+        "mode": "html",
+        "content": "<div style='display:flex;align-items:center;justify-content:space-between;height:100%;padding: 0 20px; background-color: rgba(0,0,0,0.3); border-left: 4px solid #4b9e59;'><div style='font-family: sans-serif; font-size:1.2em; color: #ddd; text-transform: uppercase; letter-spacing: 1px;'>SERVER IP: <strong id='serverIp' style='color: #4b9e59;'>SERVER_IP_PLACE_PLACEHOLDER</strong></div><button id='copyBtn' onclick='window.copyConnectCommand()' style='background: linear-gradient(90deg, #2b6e3f 0%, #4caf50 100%); color:white; border:none; padding:10px 30px; border-radius: 2px; cursor:pointer; font-weight:bold; font-family: sans-serif; text-transform: uppercase; letter-spacing: 1.5px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: all 0.2s;'>CONNECT</button></div><script>window.copyConnectCommand = function() { var ip = document.getElementById('serverIp').innerText; var pass = 'SERVER_PASSWORD_PLACEHOLDER'; var cmd = pass ? ('connect ' + ip + ':27015; password ' + pass) : ('connect ' + ip + ':27015'); var textArea = document.createElement('textarea'); textArea.value = cmd; document.body.appendChild(textArea); textArea.select(); try { document.execCommand('copy'); var btn = document.getElementById('copyBtn'); btn.innerText = 'COPIED!'; btn.style.background = '#de9b35'; setTimeout(function() { btn.innerText = 'CONNECT'; btn.style.background = 'linear-gradient(90deg, #2b6e3f 0%, #4caf50 100%)'; }, 2000); } catch (err) { console.error('Erro ao copiar', err); } document.body.removeChild(textArea); }</script>"
+      }
+    },
+    {
+      "title": "Jogadores Online",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 3, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "cs2_player_count", "legendFormat": "Players", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "#de9b35" }
+        }
+      },
+      "options": { 
+        "colorMode": "value", 
+        "graphMode": "area", 
+        "justifyMode": "center", 
+        "reduceOptions": { "values": false, "calcs": ["last"] } 
+      }
+    },
+    {
+      "title": "Mapa Atual",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 3, "x": 3, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "cs2_current_map_info", "legendFormat": "{{map_name}}", "refId": "B", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "#663399" },
+          "mappings": [
+            { "type": "regex", "options": { "pattern": "Offline", "result": { "color": "#c93636", "text": "OFFLINE" } } },
+            { "type": "regex", "options": { "pattern": "^(?!Offline).+$", "result": { "color": "#5d79ae", "text": "" } } }
+          ]
+        }
+      },
+      "options": { 
+        "textMode": "name", 
+        "colorMode": "background", 
+        "graphMode": "none", 
+        "justifyMode": "center", 
+        "reduceOptions": { "values": false, "calcs": ["last"] } 
+      }
+    },
+    {
+      "title": "Ping & Loss",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "avg_over_time(probe_duration_seconds[5m]) * 1000", "legendFormat": "Ping (ms)" },
+        { "expr": "(1 - avg_over_time(probe_success[5m])) * 100", "legendFormat": "Loss (%)" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#4b9e59", "value": null },
+              { "color": "#de9b35", "value": 60 },
+              { "color": "#c93636", "value": 100 }
+            ]
+          }
+        }
+      },
+      "options": { "graphMode": "area", "justifyMode": "center", "colorMode": "value" }
+    },
+    {
+      "title": "Recursos da Infraestrutura",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)", "legendFormat": "CPU %" },
+        { "expr": "((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes) * 100", "legendFormat": "RAM %" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+           { "matcher": { "id": "byName", "options": "CPU %" }, "properties": [ { "id": "color", "value": { "fixedColor": "#00ccff", "mode": "fixed" } } ] },
+           { "matcher": { "id": "byName", "options": "RAM %" }, "properties": [ { "id": "color", "value": { "fixedColor": "#ff00cc", "mode": "fixed" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] } }
+    },
+    {
+      "title": "Terminal da Infraestrutura",
+      "type": "logs",
+      "gridPos": { "h": 14, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "targets": [ { "expr": "{job=\"installation_logs\"}" } ],
+      "options": { "sortOrder": "Descending", "showTime": true, "wrapLogMessage": true, "prettifyLogMessage": false, "enableLogDetails": true }
+    },
+    {
+      "title": "Terminal do Servidor",
+      "type": "logs",
+      "gridPos": { "h": 14, "w": 12, "x": 12, "y": 10 },
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "targets": [ { "expr": "{job=\"cs2_console_logs\"}" } ],
+      "options": { "sortOrder": "Descending", "showTime": true, "wrapLogMessage": true, "prettifyLogMessage": false, "enableLogDetails": true }
+    }
+  ],
+  "schemaVersion": 36,
+  "title": "Servidor de CS2",
+  "uid": "cs2_01",
+  "version": 1
+}

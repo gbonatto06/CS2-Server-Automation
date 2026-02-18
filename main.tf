@@ -1,15 +1,16 @@
-# Busca o ID da conta AWS para criar um nome de bucket único globalmente
+# Retrieve AWS Account ID to create a globally unique bucket name
 data "aws_caller_identity" "current" {}
 
 locals {
   bucket_name = "cs2-server-backups-${data.aws_caller_identity.current.account_id}"
 }
-# Identifica o IP para abrir o SSH
+
+# Identify Administrator IP for SSH access
 data "http" "my_ip" {
   url = "https://ipv4.icanhazip.com"
 }
 
-# AMI do Ubuntu
+# Ubuntu AMI Lookup
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"] # Canonical
@@ -20,7 +21,7 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-# Chaves SSH para conexão na máquina
+# SSH Keys Generation
 resource "tls_private_key" "cs2_key" {
   algorithm = "RSA"
   rsa_bits  = 4096
@@ -37,14 +38,13 @@ resource "local_file" "private_key" {
   file_permission = "0400"
 }
 
-# Infra da rede
+# Network Infrastructure
 resource "aws_vpc" "cs2_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   tags = { Name = "cs2-vpc" }
 }
 
-# Internet Gateway
 resource "aws_internet_gateway" "cs2_igw" {
   vpc_id = aws_vpc.cs2_vpc.id
 }
@@ -69,7 +69,7 @@ resource "aws_route_table_association" "cs2_rta" {
   route_table_id = aws_route_table.cs2_rt.id
 }
 
-# Criação do bucket via CLI para evitar destruição no 'terraform destroy'
+# S3 Bucket Creation (via CLI to prevent destruction on 'terraform destroy')
 resource "null_resource" "cs2_backups_setup" {
   provisioner "local-exec" {
     command = <<EOT
@@ -79,6 +79,7 @@ resource "null_resource" "cs2_backups_setup" {
   }
 }
 
+# IAM Roles and Policies
 resource "aws_iam_role" "ec2_s3_role" {
   name = "cs2-ec2-s3-role"
   assume_role_policy = jsonencode({
@@ -101,108 +102,99 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_s3_role.name
 }
 
-# Definindo uma variável local para o IP do administrador
+# Security Groups
 locals {
   admin_cidr = ["${chomp(data.http.my_ip.response_body)}/32"]
 }
 
 resource "aws_security_group" "cs2_sg" {
   name        = "cs2-server-sg"
-  description = "Seguranca do Servidor CS2: Acesso restrito ao administrador"
+  description = "CS2 Server Security: Admin Access Restricted"
   vpc_id      = aws_vpc.cs2_vpc.id
 
-  # SSH restrito ao IP do Administrador
+  # SSH - Admin Only
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = local.admin_cidr
-    description = "Acesso SSH - Administrativo"
+    description = "SSH Access - Admin"
   }
 
-  # CS2 Game Traffic, aberto ao público para os jogadores conectarem
+  # CS2 Game Traffic - Public
   ingress {
     from_port   = 27015
     to_port     = 27015
     protocol    = "udp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Trafego de jogo CS2 (UDP) - Publico"
+    description = "CS2 Game Traffic (UDP) - Public"
   }
 
-  # RCON: Acesso ao Console Remoto via TCP
-  # Essencial restringir ao Admin para evitar ataques de força bruta no console do jogo.
+  # RCON - Admin Only
   ingress {
     from_port   = 27015
     to_port     = 27015
     protocol    = "tcp"
     cidr_blocks = local.admin_cidr
-    description = "Acesso RCON - Administrativo"
+    description = "RCON Access - Admin"
   }
 
-  # Grafana Dashboards, restrito ao IP do Administrador
+  # Grafana - Admin Only
   ingress {
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
     cidr_blocks = local.admin_cidr
-    description = "Interface Grafana - Administrativo"
+    description = "Grafana Dashboard - Admin"
   }
 
-  # Prometheus UI, restrito ao IP do Administrador
+  # Prometheus - Admin Only
   ingress {
     from_port   = 9090
     to_port     = 9090
     protocol    = "tcp"
     cidr_blocks = local.admin_cidr
-    description = "Interface Prometheus - Administrativo"
+    description = "Prometheus UI - Admin"
   }
 
-  # Portas internas (Loki 3100, Exporters 9100, 9137) nao precisam de 
-  # ingress rules no SG se a comunicacao for via Localhost entre os containers.
-
+  # Egress - Open
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Saida livre para atualizacoes e comunicacao S3/Steam"
+    description = "Outbound traffic for updates/S3/Steam"
   }
 
   tags = { Name = "cs2-server-security-group" }
 }
 
-# Upload do script de instalação renderizado para o S3
-resource "aws_s3_object" "install_script" {
-  bucket  = local.bucket_name
-  key     = "scripts/install_cs2.sh"
-  content = templatefile("${path.module}/scripts/install_cs2.sh", {
-    gslt_token      = trimspace(var.cs2_gslt_token)
-    s3_bucket_name  = local.bucket_name
-    server_password = var.cs2_server_password
-    db_password     = var.db_password
-  })
-  content_type = "text/x-shellscript"
-  depends_on   = [null_resource.cs2_backups_setup]
+# Archive scripts folder
+data "archive_file" "scripts_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/scripts"
+  output_path = "${path.module}/scripts.zip"
 }
 
-# Instância do servidor
+# Upload the zip file instead of a single script
+resource "aws_s3_object" "scripts_upload" {
+  bucket = local.bucket_name
+  key    = "scripts.zip"
+  source = data.archive_file.scripts_zip.output_path
+  # Etag ensures Terraform updates the file in S3 if the zip changes
+  etag   = data.archive_file.scripts_zip.output_md5
+  
+  depends_on = [null_resource.cs2_backups_setup]
+}
+
+# EC2 Instance
 resource "aws_instance" "cs2_server" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.cs2_subnet.id
   vpc_security_group_ids = [aws_security_group.cs2_sg.id]
-  key_name                = aws_key_pair.cs2_key_pair.key_name
+  key_name               = aws_key_pair.cs2_key_pair.key_name
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
-
-  # Bootstrap que baixa o script de instalação do S3
-  user_data = <<-EOF
-    #!/bin/bash
-    apt-get update
-    apt-get install -y awscli
-    aws s3 cp s3://${local.bucket_name}/scripts/install_cs2.sh /tmp/install_cs2.sh
-    chmod +x /tmp/install_cs2.sh
-    /bin/bash /tmp/install_cs2.sh
-  EOF
 
   root_block_device {
     volume_size = 120
@@ -211,5 +203,67 @@ resource "aws_instance" "cs2_server" {
 
   tags = { Name = "CS2-Dedicated-Server" }
 
-  depends_on = [aws_s3_object.install_script]
+  # User Data
+  user_data = <<-EOF
+    #!/bin/bash
+    # Debug user-data logs
+    exec > >(tee /var/log/user-data-bootstrap.log|logger -t user-data -s 2>/dev/console) 2>&1
+    
+    # Export Terraform Variables to Environment Variables
+    export server_password="${var.cs2_server_password}"
+    export db_password="${var.db_password}"
+    export gslt_token="${var.cs2_gslt_token}"
+    export s3_bucket_name="${local.bucket_name}"
+    
+    # Install dependencies required to fetch and unzip scripts
+    apt-get update
+    apt-get install -y awscli unzip
+    
+    # S3 Download
+    MAX_RETRIES=20
+    COUNT=0
+    SUCCESS=0
+    
+    echo "Waiting for scripts.zip in S3"
+    
+    while [ $COUNT -lt $MAX_RETRIES ]; do
+        if aws s3 ls "s3://${local.bucket_name}/scripts.zip"; then
+            echo "File found, Downloading"
+            aws s3 cp "s3://${local.bucket_name}/scripts.zip" /tmp/scripts.zip
+            if [ -f /tmp/scripts.zip ]; then
+                SUCCESS=1
+                break
+            fi
+        fi
+        echo "Waiting for S3 upload. Attempt $COUNT/$MAX_RETRIES"
+        sleep 10
+        COUNT=$((COUNT+1))
+    done
+
+    if [ $SUCCESS -eq 0 ]; then
+        echo "Critical Error: Failed to download scripts.zip after multiple attempts."
+        exit 1
+    fi
+
+
+    # Prepare Directory
+    echo "Unzipping scripts"
+    mkdir -p /tmp/install
+    unzip /tmp/scripts.zip -d /tmp/install
+    ls -R /tmp/install
+    
+    # Execute Orchestrator
+    chmod +x /tmp/install/install_cs2.sh
+    
+    # Navigate to script dir to ensure relative paths work
+    cd /tmp/install
+    ./install_cs2.sh
+  EOF
+
+  depends_on = [
+    
+    aws_s3_object.scripts_upload,
+    aws_iam_role_policy_attachment.s3_access
+    
+    ]
 }

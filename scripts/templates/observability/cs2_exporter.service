@@ -1,0 +1,12 @@
+[Unit]
+Description=CS2 Python Metrics Exporter
+After=network.target
+
+[Service]
+# Paths match the standard installation variables
+ExecStart=/home/steam/monitoring/venv/bin/python /home/steam/monitoring/cs2_exporter.py
+Restart=always
+User=steam
+
+[Install]
+WantedBy=multi-user.target

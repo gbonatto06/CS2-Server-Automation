@@ -1,0 +1,23 @@
+[Unit]
+Description=Counter-Strike 2 Dedicated Server
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=steam
+Group=steam
+Environment="HOME=/home/steam"
+WorkingDirectory=/home/steam/cs2_server/game/bin/linuxsteamrt64
+
+# Startup Script
+ExecStart=/bin/bash /home/steam/start_server.sh
+
+# Shutdown Script (Backs up data before killing the process)
+ExecStop=/bin/bash /home/steam/backup_db.sh
+
+# Restart Policy
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

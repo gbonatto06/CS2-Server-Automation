@@ -1,0 +1,85 @@
+services:
+  loki:
+    image: grafana/loki:2.9.2
+    network_mode: "host"
+    user: "0:0"
+    volumes: 
+      - "./loki/loki-config.yaml:/etc/loki/local-config.yaml"
+      - "loki-data:/tmp/loki"
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: always
+    # Healthcheck to ensure Loki is ready to receive logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  promtail:
+    image: grafana/promtail:2.9.2
+    network_mode: "host"
+    user: "0:0"
+    volumes:
+      - /var/log:/var/log
+      - ./promtail/config.yaml:/etc/promtail/config.yaml
+      - /home/steam/cs2_server/game/csgo:/home/steam/cs2_server/game/csgo
+      - promtail-positions:/tmp
+    restart: always
+    # Promtail starts only after Loki is healthy
+    command: 
+      - -config.file=/etc/promtail/config.yaml
+      - -client.url=http://localhost:3100/loki/api/v1/push
+    depends_on:
+      loki:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    network_mode: "host"
+    volumes: 
+      - "./prometheus:/etc/prometheus"
+    restart: always
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  grafana:
+    image: grafana/grafana:latest
+    network_mode: "host"
+    volumes: ["./grafana/provisioning:/etc/grafana/provisioning"]
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_PANELS_DISABLE_SANITIZE_HTML=true
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/definitions/cs2_server.json
+    restart: always
+    # Grafana starts after Prometheus and Loki are running
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    
+  node-exporter:
+    image: prom/node-exporter:latest
+    network_mode: "host"
+    pid: "host"
+    restart: always
+    
+  blackbox-exporter:
+    image: prom/blackbox-exporter:latest
+    network_mode: "host"
+    volumes: ["./blackbox.yaml:/config/blackbox.yaml"]
+    command: --config.file=/config/blackbox.yaml
+    restart: always
+
+volumes:
+  loki-data:
+  promtail-positions:

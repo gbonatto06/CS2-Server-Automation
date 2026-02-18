@@ -1,0 +1,27 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+positions:
+  filename: /tmp/positions.yaml
+clients:
+  - url: http://localhost:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: infra_logs
+    static_configs:
+    - targets: [localhost]
+      labels:
+        job: installation_logs
+        __path__: /var/log/user-data.log
+    - targets: [localhost]
+    # Scrapes system logs
+      labels:
+        job: installation_logs   # Same Label to appear in the same panel
+        __path__: /var/log/syslog
+
+  - job_name: game_logs
+    static_configs:
+    - targets: [localhost]
+      labels:
+        job: cs2_console_logs
+        __path__: /home/steam/cs2_server/game/csgo/console.log

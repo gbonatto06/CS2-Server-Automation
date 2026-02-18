@@ -1,0 +1,24 @@
+[
+  {
+    "Title": "Retake Mode",
+    "Command": "retake",
+    "Message": "{GREEN}>>> RETAKE MODE",
+    "ServerCommands": [
+      "css_plugins unload MatchZy",
+      "css_plugins load RetakesPlugin",
+      "map de_mirage"
+    ],
+    "Permission": { "RequiresAllPermissions": false, "PermissionList": [] }
+  },
+  {
+    "Title": "Match Mode",
+    "Command": "match",
+    "Message": "{RED}>>> COMPETITIVE MODE",
+    "ServerCommands": [
+      "css_plugins unload RetakesPlugin",
+      "css_plugins load MatchZy",
+      "map de_mirage"
+    ],
+    "Permission": { "RequiresAllPermissions": false, "PermissionList": [] }
+  }
+]

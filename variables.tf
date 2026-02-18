@@ -1,37 +1,48 @@
 variable "aws_region" {
-  description = "Região da AWS onde a infraestrutura será provisionada."
+  description = "AWS Region where the infrastructure will be provisioned."
   type        = string
-  default     = "sa-east-1" # sa-east-1 para menor latência no brasil
+  default     = "sa-east-1" # São Paulo for lower latency in Brazil
 }
 
 variable "instance_type" {
-  description = "Tipo da instância EC2." # Recomendado pelo menos uma instância t3.medium ou superior
+  description = "EC2 Instance Type. t3.medium or higher."
   type        = string
   default     = "t3.medium"
 }
 
 variable "project_name" {
-  description = "Nome do projeto utilizado para as tags dos recursos."
+  description = "Project name used for resource tagging."
   type        = string
   default     = "cs2-server-automation"
 }
 
 variable "cs2_gslt_token" {
-  description = "Token GSLT da Steam (AppID 730). Obtenha em: https://steamcommunity.com/dev/managegameservers"
+  description = "Steam Game Server Login Token. Get it at: https://steamcommunity.com/dev/managegameservers"
   type        = string
   sensitive   = true
-  # Valor será passado através do .tfvars
+  
+  # Basic validation to ensure the user didn't forget the variable
+  validation {
+    condition     = length(var.cs2_gslt_token) > 0
+    error_message = "The GSLT Token cannot be empty."
+  }
 }
 
 variable "cs2_server_password" {
-  description = "Senha para entrar no servidor"
+  description = "Password required to join the CS2 server. Leave empty for public access."
   type        = string
-  default     = "" # Deixe vazio se quiser que o servidor seja público
+  default     = ""
+  sensitive   = true
 }
 
 variable "db_password" {
-  description = "Senha root e do usuário admin do banco de dados MySQL"
+  description = "Root/Admin password for the MySQL database."
   type        = string
   sensitive   = true
-  # Valor deve ser passado via .tfvars
+
+  # Enforce minimum length
+  validation {
+    condition     = length(var.db_password) >= 8
+    error_message = "The database password must be at least 8 characters long."
+  }
 }

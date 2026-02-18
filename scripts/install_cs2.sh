@@ -1,669 +1,108 @@
 #!/bin/bash
-# Redirecionar saida para log para debug e liberar leitura para o Promtail
-exec > /var/log/user-data.log 2>&1
-sudo chmod 644 /var/log/user-data.log
+# This script acts as the entry point for the provisioner.
+# It sets up the global environment, exports variables,
+# and executes the installation modules in sequence.
 
-# Garante que a senha venha do Terraform para uma variavel global do shell
-SERVER_PASS_VAR="${server_password}"
-DB_PASS_VAR="${db_password}"
+# Global Log Configuration
+LOG_FILE="/var/log/user-data.log"
 
-echo "Provisionamento e configuracao do servidor de cs2"
+touch "$LOG_FILE"
+chmod 644 "$LOG_FILE"
 
-# Dependencias do Sistema
-# Precisamos das bibliotecas de som/audio pois caso não estejam presentes o cservidor linux vai dar acesso indevido da memoria
-sudo apt-get update
-sudo apt-get install -y lib32gcc-s1 lib32stdc++6 curl tar unzip wget jq dotnet-runtime-8.0 docker.io docker-compose-v2 awscli python3-pip python3-venv libpulse0 libpulse-dev libnss3 libnspr4 libtinfo6 libsdl2-2.0-0
+# Append output to log file and also show on console
+exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Configuracao do Usuario steam e Variaveis de Caminho
-sudo useradd -m steam || true
-sudo usermod -aG docker steam
-USER_HOME="/home/steam"
-CS2_DIR="$USER_HOME/cs2_server"
-CSGO_DIR="$CS2_DIR/game/csgo"
-CSS_DIR="$CSGO_DIR/addons/counterstrikesharp"
-MON_DIR="$USER_HOME/monitoring"
-sudo -u steam mkdir -p $MON_DIR/prometheus $MON_DIR/promtail $MON_DIR/loki $MON_DIR/grafana
-sudo -u steam mkdir -p $CSGO_DIR/logs
-# Cria um arquivo vazio para garantir que o Promtail tenha o que ler e não reclame de wildcard vazio
-sudo -u steam touch $CSGO_DIR/console.log
 
-echo "Iniciando Stack de Observabilidade"
+echo "Starting CS2 Server Automation"
+date
 
-sudo -u steam mkdir -p $MON_DIR/prometheus $MON_DIR/promtail $MON_DIR/loki $MON_DIR/grafana
+# Directory Detection
+# Determines the absolute path of where this script is located
+export INSTALL_SOURCE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+echo "Detected Source Directory: $INSTALL_SOURCE_DIR"
 
-# Instalação das dependências do exportador de métricas do servidor
-echo "Criando ambiente virtual Python..."
-sudo -u steam python3 -m venv $MON_DIR/venv
-sudo -u steam $MON_DIR/venv/bin/pip install python-valve prometheus_client
+# Force navigation to the script directory to ensure relative module paths work
+cd "$INSTALL_SOURCE_DIR" || { echo "Critical Error: Failed to change directory to $INSTALL_SOURCE_DIR"; exit 1; }
 
-# Exporter de métricas
-cat <<'PYTHON_EXP' | sudo -u steam tee $MON_DIR/cs2_exporter.py
-import time, collections, collections.abc
-from prometheus_client import start_http_server, Gauge, Info
+# Import Secrets from Environment
+echo "Importing Secrets"
+# These env vars are injected by Terraform user_data before calling this script.
+# Defaulting to empty strings prevents unbound variable errors during assignment.
+export SERVER_PASS="${server_password:-}"
+export DB_PASS="${db_password:-}"
+export GSLT_TOKEN="${gslt_token:-}"
+export S3_BUCKET="${s3_bucket_name:-}"
 
-if not hasattr(collections, 'Mapping'):
-    collections.Mapping = collections.abc.Mapping
-import valve.source.a2s
+# Global Paths Definition
+echo "Exporting Global Paths"
+export USER_HOME="/home/steam"
+export CS2_DIR="$USER_HOME/cs2_server"
+export CSGO_DIR="$CS2_DIR/game/csgo"
+export CSS_DIR="$CSGO_DIR/addons/counterstrikesharp"
+export MON_DIR="$USER_HOME/monitoring"
 
-SERVER_ADDRESS = ("127.0.0.1", 27015)
-EXPORTER_PORT = 9137
+# Pre-Flight Validation
+echo "Validating Secrets"
+MISSING_VARS=0
 
-cs2_up = Gauge('cs2_server_up', 'Status do servidor')
-cs2_players = Gauge('cs2_player_count', 'Contagem de jogadores')
-cs2_map = Info('cs2_current_map', 'Informacoes do mapa')
+if [ -z "$SERVER_PASS" ]; then echo "Error: server_password env var is missing"; MISSING_VARS=1; fi
+if [ -z "$DB_PASS" ]; then echo "Error: db_password env var is missing"; MISSING_VARS=1; fi
+if [ -z "$GSLT_TOKEN" ]; then echo "Error: gslt_token env var is missing"; MISSING_VARS=1; fi
+if [ -z "$S3_BUCKET" ]; then echo "Error: s3_bucket_name env var is missing"; MISSING_VARS=1; fi
 
-def fetch_metrics():
-    try:
-        with valve.source.a2s.ServerQuerier(SERVER_ADDRESS, timeout=5) as server:
-            info = server.info()
-            cs2_up.set(1)
-            cs2_players.set(info["player_count"])
-            map_name = info.get("map_name", info.get("map", "Unknown"))
-            cs2_map.info({'map_name': map_name})
-    except Exception as e:
-        # Se der erro na conexao, zera os players e define mapa como Offline
-        cs2_up.set(0)
-        cs2_players.set(0)
-        cs2_map.info({'map_name': 'Offline'})
+if [ "$MISSING_VARS" -eq 1 ]; then
+    echo "Critical Error: One or more required secrets are missing. Aborting."
+    exit 1
+fi
 
-if __name__ == '__main__':
-    start_http_server(EXPORTER_PORT)
-    while True:
-        fetch_metrics()
-        time.sleep(15)
-PYTHON_EXP
+# Module Execution Strategy
+MODULES_DIR="$INSTALL_SOURCE_DIR/modules"
 
-# Servico Systemd para o Exportador Python
-cat <<SYSTEMD_EXP | sudo tee /etc/systemd/system/cs2-exporter.service
-[Unit]
-Description=Exportador de métricas do CS2
-After=network.target
+# Ensure all modules are executable
+chmod +x "$MODULES_DIR"/*.sh
 
-[Service]
-ExecStart=/home/steam/monitoring/venv/bin/python /home/steam/monitoring/cs2_exporter.py
-Restart=always
-User=steam
-
-[Install]
-WantedBy=multi-user.target
-SYSTEMD_EXP
-
-sudo systemctl daemon-reload
-sudo systemctl enable cs2-exporter
-sudo systemctl start cs2-exporter
-
-# monitoramento do servidor para enviar pro grafana
-cat <<PROMETHEUS | sudo -u steam tee $MON_DIR/prometheus/prometheus.yml
-global:
-  scrape_interval: 10s
-  scrape_timeout: 9s
-
-scrape_configs:
-  - job_name: 'sistema'
-    static_configs:
-      - targets: ['127.0.0.1:9100']
-
-  - job_name: 'cs2_game'
-    static_configs:
-      - targets: ['127.0.0.1:9137']
-
-  - job_name: 'network_integrity'
-    metrics_path: /probe
-    params:
-      module: [icmp]
-    static_configs:
-      - targets: ['127.0.0.1']
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: __param_target
-      - target_label: __address__
-        replacement: 127.0.0.1:9115
-PROMETHEUS
-
-# Configuração do Blackbox Exporter
-cat <<BLACKBOX | sudo -u steam tee $MON_DIR/blackbox.yml
-modules:
-  icmp:
-    prober: icmp
-    timeout: 5s
-    icmp:
-      preferred_ip_protocol: "ip4"
-BLACKBOX
-
-cat <<LOKICONFIG | sudo -u steam tee $MON_DIR/loki/loki-config.yml
-auth_enabled: false
-server:
-  http_listen_port: 3100
-
-# Desabilita exigencia de schema v13 do Loki 3.0+
-limits_config:
-  allow_structured_metadata: false
-
-common:
-  ring:
-    instance_addr: 127.0.0.1
-    kvstore:
-      store: inmemory
-  replication_factor: 1
-  path_prefix: /tmp/loki
-
-# Configuração do Compactor para evitar erro de mkdir e conflitos de retenção
-compactor:
-  working_directory: /tmp/loki/boltdb-shipper-compactor
-  shared_store: filesystem
-
-schema_config:
-  configs:
-    - from: 2020-10-24
-      store: boltdb-shipper
-      object_store: filesystem
-      schema: v11
-      index:
-        prefix: index_
-        period: 24h
-
-storage_config:
-  filesystem:
-    directory: /tmp/loki/chunks
-LOKICONFIG
-
-# Config Promtail para ler o log de instalacao e do jogo
-cat <<PROMTAIL | sudo -u steam tee $MON_DIR/promtail/config.yml
-server:
-  http_listen_port: 9080
-  grpc_listen_port: 0
-positions:
-  filename: /tmp/positions.yaml
-clients:
-  - url: http://localhost:3100/loki/api/v1/push
-
-scrape_configs:
-  - job_name: infra_logs
-    static_configs:
-    - targets: [localhost]
-      labels:
-        job: installation_logs
-        __path__: /var/log/user-data.log
-    - targets: [localhost]
-    # Captura os logs do sistema
-      labels:
-        job: installation_logs   # Mesma Label para aparecer no mesmo painel
-        __path__: /var/log/syslog
-
-  - job_name: game_logs
-    static_configs:
-    - targets: [localhost]
-      labels:
-        job: cs2_console_logs
-        __path__: /home/steam/cs2_server/game/csgo/console.log
-PROMTAIL
-
-# Configurar Loki e Prometheus como Data Sources
-sudo -u steam mkdir -p $MON_DIR/grafana/provisioning/datasources
-
-cat <<DATASOURCES | sudo -u steam tee $MON_DIR/grafana/provisioning/datasources/ds.yaml
-apiVersion: 1
-datasources:
-  - name: Loki
-    type: loki
-    uid: Loki # UIDs explícitos para garantir link com o Dashboard
-    access: proxy
-    url: http://localhost:3100
-    isDefault: false
-  - name: Prometheus
-    type: prometheus
-    uid: Prometheus # UIDs explícitos para garantir link com o Dashboard
-    access: proxy
-    url: http://localhost:9090
-    isDefault: true
-DATASOURCES
-
-# Configurar Dashboards
-sudo -u steam mkdir -p $MON_DIR/grafana/provisioning/dashboards/definitions
-cat <<DASHPROV | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/provider.yaml
-apiVersion: 1
-providers:
-  - name: 'CS2 Dashboards'
-    orgId: 1
-    folder: ''
-    type: file
-    options:
-      path: /etc/grafana/provisioning/dashboards/definitions
-DASHPROV
-
-# JSON do Dashboard
-cat <<'DASHJSON' | sudo -u steam tee $MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json
-{
-  "editable": true,
-  "refresh": "5s",
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 1,
-  "links": [],
-  "panels": [
-    {
-      "title": "Status do Servidor",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "targets": [ { "expr": "cs2_server_up", "format": "table", "refId": "A" } ],
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            { "type": "value", "options": { "0": { "text": "Offline", "color": "red" }, "1": { "text": "Online", "color": "green" } } },
-            { "type": "special", "options": { "match": "null", "result": { "text": "Instalando", "color": "#FF9900" } } }
-          ]
-        }
-      },
-      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "noDataText": "Instalando", "textMode": "value", "reduceOptions": { "calcs": ["last"], "values": false } }
-    },
-    {
-      "title": "Conexão Rápida",
-      "type": "text",
-      "gridPos": { "h": 4, "w": 18, "x": 6, "y": 0 },
-      "options": {
-        "mode": "html",
-        "content": "<div style='display:flex;align-items:center;justify-content:center;height:100%;gap:20px;'><div style='font-size:1.2em;'>IP do Servidor: <strong id='serverIp'>SERVER_IP_PLACE_PLACEHOLDER</strong></div><button id='copyBtn' onclick='window.copyConnectCommand()' style='background:#3274d9;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;font-weight:bold;'>Copiar Connect</button></div><script>window.copyConnectCommand = function() { var ip = document.getElementById('serverIp').innerText; var pass = 'SERVER_PASSWORD_PLACEHOLDER'; var cmd = pass ? ('connect ' + ip + ':27015; password ' + pass) : ('connect ' + ip + ':27015'); var textArea = document.createElement('textarea'); textArea.value = cmd; document.body.appendChild(textArea); textArea.select(); try { document.execCommand('copy'); var btn = document.getElementById('copyBtn'); btn.innerText = 'Copiado!'; setTimeout(function() { btn.innerText = 'Copiar Connect'; }, 2000); } catch (err) { console.error('Erro ao copiar', err); } document.body.removeChild(textArea); }</script>"
-      }
-    },
-    {
-      "title": "Jogadores Online",
-      "type": "stat",
-      "gridPos": { "h": 6, "w": 3, "x": 0, "y": 4 },
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "targets": [
-        { "expr": "cs2_player_count", "legendFormat": "Players", "refId": "A" }
-      ],
-      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "reduceOptions": { "values": false, "calcs": ["last"] } }
-    },
-    {
-      "title": "Mapa Atual",
-      "type": "stat",
-      "gridPos": { "h": 6, "w": 3, "x": 3, "y": 4 },
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "targets": [
-        { "expr": "cs2_current_map_info", "legendFormat": "{{map_name}}", "refId": "B", "instant": true }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "fixed", "fixedColor": "#663399" },
-          "mappings": [
-            { "type": "regex", "options": { "pattern": "Offline", "result": { "color": "red", "text": "OFFLINE" } } },
-            { "type": "regex", "options": { "pattern": "^(?!Offline).+$", "result": { "color": "#5794F2", "text": "" } } }
-          ]
-        }
-      },
-      "options": { 
-        "textMode": "name", 
-        "colorMode": "background", 
-        "graphMode": "none", 
-        "justifyMode": "center", 
-        "reduceOptions": { "values": false, "calcs": ["last"] } 
-      }
-    },
-    {
-      "title": "Ping & Loss",
-      "type": "stat",
-      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 4 },
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "targets": [
-        { "expr": "avg_over_time(probe_duration_seconds[5m]) * 1000", "legendFormat": "Ping (ms)" },
-        { "expr": "(1 - avg_over_time(probe_success[5m])) * 100", "legendFormat": "Loss (%)" }
-      ],
-      "options": { "graphMode": "area", "justifyMode": "center" }
-    },
-    {
-      "title": "Recursos da Infraestrutura",
-      "type": "timeseries",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "targets": [
-        { "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)", "legendFormat": "CPU %" },
-        { "expr": "((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes) * 100", "legendFormat": "RAM %" }
-      ],
-      "options": { "legend": { "displayMode": "table", "placement": "right" } }
-    },
-    {
-      "title": "Terminal da Infraestrutura",
-      "type": "logs",
-      "gridPos": { "h": 14, "w": 12, "x": 0, "y": 10 },
-      "datasource": { "type": "loki", "uid": "Loki" },
-      "targets": [ { "expr": "{job=\"installation_logs\"}" } ],
-      "options": { "sortOrder": "Descending", "showTime": true, "wrapLogMessage": true }
-    },
-    {
-      "title": "Terminal do Servidor",
-      "type": "logs",
-      "gridPos": { "h": 14, "w": 12, "x": 12, "y": 10 },
-      "datasource": { "type": "loki", "uid": "Loki" },
-      "targets": [ { "expr": "{job=\"cs2_console_logs\"}" } ],
-      "options": { "sortOrder": "Descending", "showTime": true, "wrapLogMessage": true }
-    }
-  ],
-  "schemaVersion": 36,
-  "title": "Servidor de CS2",
-  "uid": "cs2_01",
-  "version": 1
-}
-DASHJSON
-
-# Injeta IP Público e Senha no Dashboard
-PUBLIC_IP=$(curl -s https://ipv4.icanhazip.com | tr -d '\r\n')
-sed -i "s|SERVER_IP_PLACE_PLACEHOLDER|$PUBLIC_IP|g" "$MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json"
-sed -i "s|SERVER_PASSWORD_PLACEHOLDER|$SERVER_PASS_VAR|g" "$MON_DIR/grafana/provisioning/dashboards/definitions/cs2_server.json"
-
-# Docker Compose com Network Host e Promtail Root
-cat <<DOCKERCOMPOSE | sudo -u steam tee $MON_DIR/docker-compose.yml
-services:
-  loki:
-    image: grafana/loki:2.9.2
-    network_mode: "host"
-    user: "0:0"
-    volumes: 
-      - "./loki/loki-config.yml:/etc/loki/local-config.yaml"
-      - "loki-data:/tmp/loki"
-    command: -config.file=/etc/loki/local-config.yaml
-    restart: always
-    # Healthcheck para garantir que o Loki está pronto para receber logs
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  promtail:
-    image: grafana/promtail:2.9.2
-    network_mode: "host"
-    user: "0:0"
-    volumes:
-      - /var/log:/var/log
-      - ./promtail/config.yml:/etc/promtail/config.yml
-      - /home/steam/cs2_server/game/csgo:/home/steam/cs2_server/game/csgo
-      - promtail-positions:/tmp
-    restart: always
-    # Promtail só inicia DEPOIS que o Loki estiver "healthy"
-    depends_on:
-      loki:
-        condition: service_healthy
-
-  prometheus:
-    image: prom/prometheus:latest
-    network_mode: "host"
-    volumes: ["./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"]
-    restart: always
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  grafana:
-    image: grafana/grafana:latest
-    network_mode: "host"
-    volumes: ["./grafana/provisioning:/etc/grafana/provisioning"]
-    environment:
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-      - GF_PANELS_DISABLE_SANITIZE_HTML=true
-      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/definitions/cs2_server.json
-    restart: always
-    # Grafana sobe depois que Prometheus e Loki estiverem rodando
-    depends_on:
-      prometheus:
-        condition: service_healthy
-      loki:
-        condition: service_healthy
+run_module() {
+    local script_name=$1
+    local script_path="$MODULES_DIR/$script_name"
     
-  node-exporter:
-    image: prom/node-exporter:latest
-    network_mode: "host"
-    pid: "host"
-    restart: always
+    echo "Running Module: $script_name"
     
-  blackbox-exporter:
-    image: prom/blackbox-exporter:latest
-    network_mode: "host"
-    volumes: ["./blackbox.yml:/config/blackbox.yml"]
-    command: --config.file=/config/blackbox.yml
-    restart: always
-
-volumes:
-  loki-data:
-  promtail-positions:
-DOCKERCOMPOSE
-
-# Cria os diretórios e dá permissão antes de subir o Docker
-sudo chown -R steam:steam $USER_HOME
-sudo chmod -R 777 $MON_DIR
-# Permissão na pasta de logs do jogo que criamos antecipadamente
-sudo chmod -R 777 $CSGO_DIR
-
-cd $MON_DIR && sudo docker compose up -d
-
-# Aguarda serviços de monitoramento estabilizarem
-until curl -s --fail http://127.0.0.1:9090/-/healthy > /dev/null; do sleep 5; done
-echo "Stack de Monitoramento UP! Iniciando o download do jogo."
-
-cd $USER_HOME
-# Instalacao do SteamCMD e CS2
-echo "Baixando CS2 via SteamCMD"
-sudo -u steam mkdir -p $USER_HOME/steamcmd
-cd $USER_HOME/steamcmd
-sudo -u steam curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | sudo -u steam tar zxvf -
-sudo -u steam ./steamcmd.sh +force_install_dir $CS2_DIR +login anonymous +app_update 730 validate +quit
-
-
-echo "Criando link simbólico para steamclient.so..."
-sudo -u steam mkdir -p /home/steam/.steam/sdk64
-# o steamclient é mapeado na pasta steamcmd e nao dentro da pasta do servidor
-sudo -u steam ln -s /home/steam/steamcmd/linux64/steamclient.so /home/steam/.steam/sdk64/steamclient.so
-
-# Ajuste de Permissoes Recursivas
-sudo chown -R steam:steam $USER_HOME/
-# Garante que o console.log seja legivel, após a atualização
-sudo chmod -R 755 $CSGO_DIR
-
-# Aguardar a criação real do gameinfo.gi
-echo "Aguardando a criação do arquivo gameinfo.gi pelo SteamCMD..."
-until [ -f "$CSGO_DIR/gameinfo.gi" ]; do
-    echo "Aguardando arquivos base do jogo..."
-    sleep 10
-done
-
-# Instalacao do Metamod
-LATEST_METAMOD_FILE=$(curl -s https://mms.alliedmods.net/mmsdrop/2.0/mmsource-latest-linux)
-sudo -u steam wget "https://mms.alliedmods.net/mmsdrop/2.0/$LATEST_METAMOD_FILE" -O /tmp/metamod.tar.gz
-sudo -u steam tar -xzvf /tmp/metamod.tar.gz -C $CSGO_DIR
-
-# Alteracao do gameinfo.gi
-if ! grep -q "csgo/addons/metamod" $CSGO_DIR/gameinfo.gi; then
-    sudo -u steam sed -i '/Game_LowViolence/a \            Game    csgo/addons/metamod' $CSGO_DIR/gameinfo.gi
-fi
-
-# Instalacao do CSSharp e Plugins Base
-CSS_URL=$(curl -s https://api.github.com/repos/roflmuffin/CounterStrikeSharp/releases/latest | jq -r '.assets[] | select(.name | contains("with-runtime") and contains("linux")) | .browser_download_url')
-sudo -u steam wget $CSS_URL -O /tmp/css.zip && sudo -u steam unzip -o /tmp/css.zip -d $CSGO_DIR
-
-# Renomeia o exemplo para fazer a troca do guideline depois
-if [ ! -f "$CSS_DIR/configs/core.json" ] && [ -f "$CSS_DIR/configs/core.example.json" ]; then
-    sudo -u steam cp "$CSS_DIR/configs/core.example.json" "$CSS_DIR/configs/core.json"
-fi
-# sed para trocar true por false na diretiva de guidelines
-sudo -u steam sed -i 's/"FollowCS2ServerGuidelines": true/"FollowCS2ServerGuidelines": false/g' "$CSS_DIR/configs/core.json"
-
-
-for plugin in AnyBaseLib PlayerSettings MenuManager; do
-    URL=$(curl -s "https://api.github.com/repos/NickFox007/""$plugin""CS2/releases/latest" | jq -r ".assets[] | select(.name == \"$plugin.zip\") | .browser_download_url")
-    sudo -u steam wget $URL -O /tmp/$plugin.zip && sudo -u steam unzip -o /tmp/$plugin.zip -d $CSGO_DIR
-done
-
-# MatchZy
-MATCHZY_URL=$(curl -s https://api.github.com/repos/shobhit-pathak/MatchZy/releases/latest | jq -r '.assets[] | select(.name | startswith("MatchZy-") and endswith(".zip") and (contains("with-cssharp") | not)) | .browser_download_url')
-sudo -u steam wget $MATCHZY_URL -O /tmp/matchzy.zip && sudo -u steam unzip -o /tmp/matchzy.zip -d $CSGO_DIR
-
-# Altera config.cfg já extraído pelo zip para dar admin a todos
-sudo -u steam sed -i 's/matchzy_everyone_is_admin false/matchzy_everyone_is_admin true/' $CSGO_DIR/cfg/MatchZy/config.cfg
-
-# WeaponPaints
-WEAPONPAINTS_URL=$(curl -s https://api.github.com/repos/Nereziel/cs2-WeaponPaints/releases/latest | jq -r '.assets[] | select(.name == "WeaponPaints.zip") | .browser_download_url')
-sudo -u steam wget $WEAPONPAINTS_URL -O /tmp/weaponpaints.zip
-sudo -u steam mkdir -p /tmp/wp_temp && sudo -u steam unzip -o /tmp/weaponpaints.zip -d /tmp/wp_temp
-sudo -u steam cp -rf /tmp/wp_temp/WeaponPaints $CSS_DIR/plugins/
-sudo -u steam cp -rf /tmp/wp_temp/gamedata/* $CSS_DIR/gamedata/
-
-# Cria a estrutura de pastas de configuração antes de criar o arquivo
-sudo -u steam mkdir -p "$CSS_DIR/configs/plugins/WeaponPaints"
-
-# Gera o arquivo WeaponPaints.json com as credenciais do banco injetadas
-cat <<EOF | sudo -u steam tee "$CSS_DIR/configs/plugins/WeaponPaints/WeaponPaints.json"
-{
-	"Version": 4,
-	"DatabaseHost": "127.0.0.1",
-	"DatabasePort": 3306,
-	"DatabaseUser": "cs2_admin",
-	"DatabasePassword": "$DB_PASS_VAR",
-	"DatabaseName": "cs2_server",
-	"CmdRefreshCooldownSeconds": 15,
-	"Prefix": "[WeaponPaints]",
-	"Website": "",
-    "Messages": {
-        "WebsiteMessageCommand": "Visit {WEBSITE} where you can change skins.",
-        "SynchronizeMessageCommand": "Type !wp to synchronize chosen skins.",
-        "KnifeMessageCommand": "Type !knife to open knife menu.",
-        "CooldownRefreshCommand": "You can\u0027t refresh weapon paints right now.",
-        "SuccessRefreshCommand": "Refreshing weapon paints.",
-        "ChosenKnifeMenu": "You have chosen {KNIFE} as your knife.",
-        "ChosenSkinMenu": "You have chosen {SKIN} as your skin.",
-        "ChosenKnifeMenuKill": "To correctly apply skin for knife, you need to type !kill.",
-        "KnifeMenuTitle": "Knife Menu.",
-        "WeaponMenuTitle": "Weapon Menu.",
-        "SkinMenuTitle": "Select skin for {WEAPON}"
-    },
-    "Additional": {
-        "KnifeEnabled": true,
-        "SkinEnabled": true,
-        "CommandWpEnabled": true,
-        "CommandKillEnabled": true,
-        "CommandKnife": ["knife"],
-        "CommandSkin": ["ws"],
-        "CommandSkinSelection": ["skins"],
-        "CommandRefresh": ["wp"],
-        "CommandKill": ["kill"],
-        "GiveRandomKnife": false,
-        "GiveRandomSkins": false
-    }
+    
+    if [ -f "$script_path" ]; then
+        # 'source' runs the script in the current shell context, sharing variables.
+        source "$script_path"
+        
+        # Capture the exit code of the last command in the sourced script
+        if [ $? -eq 0 ]; then
+            echo "Module $script_name completed"
+        else
+            echo "Critical Error: Module $script_name Failed. Aborting Setup."
+            exit 1
+        fi
+    else
+        echo "Critical Error: Module $script_name not found at $script_path"
+        exit 1
+    fi
 }
-EOF
 
-# Plugin de retake
-RETAKES_URL=$(curl -s https://api.github.com/repos/B3none/cs2-retakes/releases/latest | jq -r '.assets[] | select(.name | startswith("RetakesPlugin-") and (contains("no-map-configs") | not)) | .browser_download_url')
-sudo -u steam wget $RETAKES_URL -O /tmp/retakes.zip
-sudo -u steam unzip -o /tmp/retakes.zip -d $CSGO_DIR/
+# Execution Sequence
 
+# System Dependencies
+run_module "sys_deps.sh"
 
-# Custom Commands para gerenciar a transição de matchzy e o plugin de retake
-CC_URL=$(curl -s https://api.github.com/repos/HerrMagiic/CSS-CreateCustomCommands/releases/latest | jq -r '.assets[] | select(.name == "CustomCommands.zip") | .browser_download_url')
-sudo -u steam mkdir -p "$CSS_DIR/plugins/CustomCommands"
-sudo -u steam wget $CC_URL -O /tmp/customcommands.zip
-sudo -u steam unzip -o /tmp/customcommands.zip -d "$CSS_DIR/plugins/CustomCommands/"
+# Observability
+run_module "observability.sh"
 
-sudo -u steam mkdir -p "$CSS_DIR/plugins/CustomCommands/Commands"
+# Game Setup
+run_module "steam_setup.sh"
 
-cat <<EOF | sudo -u steam tee "$CSS_DIR/plugins/CustomCommands/Commands/PublicModes.json"
-[
-  {
-    "Title": "Modo Retake",
-    "Command": "retake",
-    "Message": "{GREEN}>>> RETAKE",
-    "ServerCommands": [
-      "css_plugins unload MatchZy",
-      "css_plugins load RetakesPlugin",
-      "map de_mirage"
-    ],
-    "Permission": { "RequiresAllPermissions": false, "PermissionList": [] }
-  },
-  {
-    "Title": "Modo Match",
-    "Command": "match",
-    "Message": "{RED}>>> COMPETITIVO",
-    "ServerCommands": [
-      "css_plugins unload RetakesPlugin",
-      "css_plugins load MatchZy",
-      "map de_mirage"
-    ],
-    "Permission": { "RequiresAllPermissions": false, "PermissionList": [] }
-  }
-]
-EOF
+# Plugins
+run_module "plugins.sh"
 
-# Configuração de inicialização para garantir plugin load order
-# Define MatchZy como padrão e descarrega Retakes para evitar conflito no boot
-# Carrega MatchZy e mata Retakes apenas no boot do processo
-cat <<EOF | sudo -u steam tee $CSGO_DIR/cfg/autoexec.cfg
-css_plugins unload RetakesPlugin
-css_plugins load MatchZy
-EOF
+# Databases & Lifecycle
+run_module "database.sh"
 
-# Permissões nas pastas dos plugins
-sudo chown -R steam:steam "$CSGO_DIR/addons/counterstrikesharp"
-
-
-# Configuracao DB e Restore
-sudo docker run -d --name cs2-mysql --restart always -e MYSQL_ROOT_PASSWORD=$DB_PASS_VAR -e MYSQL_DATABASE=cs2_server -e MYSQL_USER=cs2_admin -e MYSQL_PASSWORD=$DB_PASS_VAR -p 3306:3306 -v /home/steam/mysql_data:/var/lib/mysql mysql:8.0
-until sudo docker exec cs2-mysql mysqladmin ping -h 127.0.0.1 -u"cs2_admin" -p"$DB_PASS_VAR" --silent; do sleep 5; done
-
-LATEST_BACKUP=$(aws s3 ls s3://${s3_bucket_name}/ | sort | tail -n 1 | awk '{print $4}')
-if [ -n "$LATEST_BACKUP" ]; then
-    aws s3 cp s3://${s3_bucket_name}/$LATEST_BACKUP /tmp/restore_db.sql
-    docker exec -i cs2-mysql mysql -h 127.0.0.1 -u cs2_admin -p$DB_PASS_VAR cs2_server < /tmp/restore_db.sql
-fi
-
-# Scripts de Inicializacao
-cat <<'EOF' | sudo tee $USER_HOME/start_server.sh
-#!/bin/bash
-set -euo pipefail
-
-# Terraform injeta os valores aqui
-GSLT_TOKEN="${gslt_token}"
-SERVER_PASS="${server_password}"
-
-cd /home/steam/cs2_server/game/bin/linuxsteamrt64
-
-export LD_LIBRARY_PATH=".:$${LD_LIBRARY_PATH:-}"
-
-# Usamos as variáveis definidas no início deste arquivo
-./cs2 -dedicated -usercon -ip 0.0.0.0 -port 27015 +map de_mirage +sv_setsteamaccount "$GSLT_TOKEN" +sv_password "$SERVER_PASS" +log on +sv_logflush 1 +sv_logsdir logs > /home/steam/cs2_server/game/csgo/console.log 2>&1
-EOF
-
-cat <<EOF | sudo tee $USER_HOME/backup_db.sh
-#!/bin/bash
-BACKUP_NAME="cs2_server_dump.sql"
-LOCAL_PATH="/home/steam/\$BACKUP_NAME"
-
-docker exec cs2-mysql mysqldump -h 127.0.0.1 -u cs2_admin -p$DB_PASS_VAR cs2_server > "\$LOCAL_PATH"
-aws s3 cp "\$LOCAL_PATH" "s3://${s3_bucket_name}/\$BACKUP_NAME"
-EOF
-
-sudo chmod +x $USER_HOME/*.sh && sudo chown steam:steam $USER_HOME/*.sh
-sudo -u steam mkdir -p $CSGO_DIR/logs
-
-# Servico CS2
-cat <<EOF | sudo tee /etc/systemd/system/cs2.service
-[Unit]
-Description=Counter-Strike 2 Dedicated Server
-After=network-online.target docker.service
-[Service]
-Type=simple
-User=steam
-Group=steam
-Environment="HOME=/home/steam"
-WorkingDirectory=/home/steam/cs2_server/game/bin/linuxsteamrt64
-ExecStart=/bin/bash /home/steam/start_server.sh
-ExecStop=/bin/bash /home/steam/backup_db.sh
-Restart=always
-RestartSec=15
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload && sudo systemctl enable cs2 && sudo systemctl start cs2
-echo "Setup Finalizado com sucesso."
+echo ""
+echo "Provisioning Finished"
+echo "Server IP: $(curl -s https://ipv4.icanhazip.com)"
+date
