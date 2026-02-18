@@ -23,6 +23,8 @@
 
 This project implements a complete and **secure** infrastructure for hosting a Counter-Strike 2 server on AWS. Using **Infrastructure as Code (IaC)**, the project provisions not only the game server but also a full monitoring stack featuring a stateless architecture with data persistence.
 
+Designed for an ephemeral workflow, you only pay while the server is active. In the São Paulo (sa-east-1) region, the estimated cost is approximately $0.08 per hour. This includes the t3.medium instance, the mandatory public IPv4 address, and the 120GB gp3 storage. Since your data is persisted in S3, you can run terraform destroy as soon as you finish your match to stop all hourly billing, keeping your expenses strictly tied to the download and your playtime.
+
 ### Overview
 
 #### Security
@@ -146,6 +148,8 @@ Other usable commands belong to their respective plugins (MatchZy, WeaponPaints)
 **Servidor de CS2 automatizado via Terraform e AWS CLI.**
 
 Este projeto implementa uma infraestrutura completa e **segura** para hospedar um servidor de Counter-Strike 2 na AWS. Utilizando **Infrastructure as Code (IaC)**, o projeto provisiona não apenas o servidor de jogo, mas uma stack completa de monitoramento com arquitetura stateless com persistência de dados.
+
+Projetada para um fluxo de trabalho efêmero, você paga apenas enquanto o servidor está ativo. Na região de São Paulo (sa-east-1), o custo estimado é de aproximadamente $0,08 por hora. Isso cobre a instância t3.medium, o endereço IPv4 público obrigatório e os 120GB de armazenamento gp3. Como seus dados são salvos no S3, você pode executar o terraform destroy assim que terminar sua partida para interromper toda a cobrança horária, mantendo seus gastos estritamente ligados ao download e tempo de jogo.
 
 ### Overview
 
