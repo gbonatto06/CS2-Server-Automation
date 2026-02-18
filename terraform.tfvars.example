@@ -1,19 +1,44 @@
-# Região da AWS que o servidor vai ser hosteado, use por ex: sa-east-1, servidor no brasil = menor latência
+# INSTRUCTIONS / INSTRUÇÕES
+
+# 🇺🇸 Rename this file to 'terraform.tfvars' and fill in your values.
+#    This file contains sensitive secrets. Do not share with anyone
+#
+# 🇧🇷 Renomeie este arquivo para 'terraform.tfvars' e preencha com seus valores.
+#    Este arquivo contém segredos sensíveis. Não compartilhe com ninguém.
+# ---------------------------------------------------------------------------------------------------------------------
+
+# AWS CONFIGURATION / CONFIGURAÇÃO AWS
+
+# 🇺🇸 AWS Region. Use the closest aws region to you. Example: 'sa-east-1' for the lowest latency if you are in Brazil.
+# 🇧🇷 Região da AWS. Use a região mais perto possível. Exemplo: 'sa-east-1' para a menor latência se você estiver no Brasil.
 aws_region = "sa-east-1"
 
-# Tipo de instância, t3.medium é o minimo para conseguir um servidor razoavel
+# 🇺🇸 Instance Type. 't3.medium' is the minimum recommended for stable performance (CPU/RAM).
+# 🇧🇷 Tipo de Instância. 't3.medium' é o mínimo recomendado para uma performance estável (CPU/RAM).
 instance_type = "t3.medium"
 
-# Nome identificador do projeto
-project_name = "meu-servidor-cs2"
+# 🇺🇸 Project Name. Used to tag resources in AWS Console (e.g., "cs2-server-production").
+# 🇧🇷 Nome do Projeto. Usado para etiquetar recursos no console da AWS (ex: "cs2-servidor-producao").
+project_name = "cs2-server-automation"
 
-# GSLT Token (AppID 730) 
-# Obtenha o seu em: https://steamcommunity.com/dev/managegameservers
-cs2_gslt_token = "COLE_SEU_TOKEN_AQUI"
+# GAME CONFIGURATION / CONFIGURAÇÃO DO JOGO
 
-# Sua senha do servidor, caso fique em branco, o servidor vai ser público.
-# Recomendado colocar senha, pois o servidor fornece admin no plugin do MatchZy para todos os usuários
-cs2_server_password = "minhasenha123"
+# 🇺🇸 Steam GSLT Token (AppID 730). Required for the server to be reachable over the internet.
+#    Get yours at: https://steamcommunity.com/dev/managegameservers
+# 🇧🇷 Token GSLT da Steam (AppID 730). Obrigatório para o servidor ser acessível pela internet.
+#    Obtenha o seu em: https://steamcommunity.com/dev/managegameservers
+cs2_gslt_token = "YOUR_TOKEN_HERE"
 
-# Senha do banco de dados que contém a configuração das skins
-db_password = "senhadodb123"
+# 🇺🇸 Server Password.
+#    It is highly recommended to set a password.
+#    If left empty, the server will be public and might expose Admin privileges depending on MatchZy config.
+# 🇧🇷 Senha do Servidor.
+#    É altamente recomendado definir uma senha.
+#    Se ficar em branco, o servidor será público e pode expor privilégios de Admin dependendo da config do MatchZy.
+cs2_server_password = "changeme123"
+
+# --- DATABASE / BANCO DE DADOS ---
+
+# 🇺🇸 Database Password. Used for MySQL (Skins storage). Must be at least 8 characters.
+# 🇧🇷 Senha do Banco de Dados. Usada para o MySQL (armazenamento de Skins). Mínimo de 8 caracteres.
+db_password = "secure_db_password_123"
