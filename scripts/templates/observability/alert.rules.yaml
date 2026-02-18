@@ -1,0 +1,37 @@
+groups:
+  - name: server_health
+    rules:
+      # High RAM Usage Alert
+      # Triggered when RAM usage exceeds 90% for more than 5 minutes.
+      # Uses node_exporter metrics.
+      - alert: HighRamUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Server RAM usage is critical (Instance {{ $labels.instance }})"
+          description: "RAM usage is above 90% (Current value: {{ $value | printf \"%.2f\" }}%)"
+
+      # High Packet Loss Alert
+      # Triggered when ICMP packet loss via Blackbox Exporter exceeds 5% for 1 minute.
+      # Uses blackbox_exporter metrics (probe_success == 0 means failure).
+      - alert: HighPacketLoss
+        expr: (1 - avg_over_time(probe_success{job="blackbox"}[1m])) * 100 > 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High Packet Loss detected (Instance {{ $labels.instance }})"
+          description: "Packet loss is above 5% (Current value: {{ $value | printf \"%.2f\" }}%)"
+
+      # Instance Down Alert
+      # Triggered if the CS2 Server instance is unreachable via Prometheus.
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Instance {{ $labels.instance }} down"
+          description: "{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 1 minute."

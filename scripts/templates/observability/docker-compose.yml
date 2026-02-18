@@ -37,6 +37,7 @@ services:
     image: prom/prometheus:latest
     network_mode: "host"
     volumes: 
+      - "./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yaml"
       - "./prometheus:/etc/prometheus"
     restart: always
     command:
