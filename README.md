@@ -117,13 +117,19 @@ Other usable commands belong to their respective plugins (MatchZy, WeaponPaints)
 
 ```text
 .
-├── main.tf                # Main infrastructure file: Defines EC2, Security Groups, IAM, and S3
-├── variables.tf           # Variable definitions (Region, Instance Type, Passwords)
-├── providers.tf           # AWS Provider configuration
-├── outputs.tf             # Terraform Outputs (Displays Server IP at the end)
-├── terraform.tfvars       # (GitIgnored) File where you insert your actual passwords and tokens
-└── scripts/
-    └── install_cs2.sh     # Automation script: Installs Monitoring, SteamCMD, CS2, Plugins, etc.
+├── main.tf                 # Main infrastructure definition: EC2, Security Groups, IAM, and S3
+├── variables.tf            # Variable declarations (Region, Instance Type, Passwords)
+├── providers.tf            # AWS Provider configuration
+├── outputs.tf              # Terraform Outputs (Displays Server IP at the end)
+├── terraform.tfvars        # (GitIgnored) File where you insert your actual passwords and tokens
+└── scripts/                # Automation Root
+    ├── install_cs2.sh      # Orchestrator Script
+    ├── dashboards/         # Grafana JSON Dashboard definitions
+    ├── modules/            # Modular installation logic (System, Docker, Steam, Plugins, DB)
+    └── templates/          # Configuration templates
+        ├── database/       # Systemd units and Backup scripts
+        ├── observability/  # Docker Compose and .yaml configs (Prometheus, Loki, Promtail)
+        └── plugins/        # Game modes JSONs and Autoexec
 ```
 
 <br>
@@ -235,13 +241,20 @@ Os demais comandos utilizáveis pertencem aos respectivos plugins (MatchZy, Weap
 
 ```text
 .
-├── main.tf                # Arquivo da infraestrutura principal: Define EC2, Security Groups, IAM e S3
-├── variables.tf           # Definição das variáveis (Região, Tipo de Instância, Senhas)
-├── providers.tf           # Configuração do provedor AWS
-├── outputs.tf             # Outputs do Terraform (Exibe o IP do servidor ao final)
-├── terraform.tfvars       # (Ignorado pelo Git) Arquivo onde você insere suas senhas e tokens reais
-└── scripts/
-    └── install_cs2.sh     # O script da automação: Instala Monitoramento, SteamCMD, CS2, Plugins, etc.
+├── main.tf                 # Arquivo principal: Configurações da EC2, Security Groups, IAM e S3
+├── variables.tf            # Declaração das variáveis (Região, Tipo de Instância, Senhas)
+├── providers.tf            # Configuração do provedor AWS
+├── outputs.tf              # Outputs do Terraform (Exibe o IP do servidor ao final)
+├── terraform.tfvars        # (Ignorado) Arquivo onde você insere suas senhas reais
+└── scripts/                # Raiz da Automação
+    ├── install_cs2.sh      # Script Orquestrador Mestre
+    ├── dashboards/         # Definições de Dashboard JSON do Grafana
+    ├── modules/            # Módulos de instalação (Sistema, Docker, Steam, Plugins, BD)
+    └── templates/          # Modelos de configuração
+        ├── database/       # Serviços Systemd e Scripts de Backup
+        ├── observability/  # Docker Compose e configs .yaml (Prometheus, Loki, Promtail)
+        └── plugins/        # JSONs de modos de jogo e Autoexec
+```
 
 ### Licença / License
 
