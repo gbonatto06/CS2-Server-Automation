@@ -5,6 +5,9 @@
 
 echo "Starting Plugin Installation"
 
+# Local path for plugins
+TEMPLATE_DIR="$INSTALL_SOURCE_DIR/templates/plugins"
+
 # Validation of Required Variables
 : "${CSGO_DIR:?Variable CSGO_DIR not set}"
 : "${CSS_DIR:?Variable CSS_DIR not set}"
