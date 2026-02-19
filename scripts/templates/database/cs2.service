@@ -1,6 +1,7 @@
 [Unit]
 Description=Counter-Strike 2 Dedicated Server
 After=network-online.target docker.service
+Requires=docker.service
 
 [Service]
 Type=simple
@@ -9,11 +10,15 @@ Group=steam
 Environment="HOME=/home/steam"
 WorkingDirectory=/home/steam/cs2_server/game/bin/linuxsteamrt64
 
+# The time limit to shutdown
+TimeoutStopSec=180
+
 # Startup Script
 ExecStart=/bin/bash /home/steam/start_server.sh
 
 # Shutdown Script (Backs up data before killing the process)
 ExecStop=/bin/bash /home/steam/backup_db.sh
+KillMode=mixed
 
 # Restart Policy
 Restart=always

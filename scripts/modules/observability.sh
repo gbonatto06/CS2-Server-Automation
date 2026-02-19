@@ -57,7 +57,7 @@ install_file "$TEMPLATE_DIR/prometheus.yml" "$MON_DIR/prometheus/prometheus.yaml
 
 # Alert Rules Configuration
 # Copies the alert definitions to the Prometheus directory
-install_file "$TEMPLATE_DIR/alert_rules.yaml" "$MON_DIR/prometheus/alert_rules.yaml"
+install_file "$TEMPLATE_DIR/alert.rules.yaml" "$MON_DIR/prometheus/alert.rules.yaml"
 
 # Loki
 install_file "$TEMPLATE_DIR/loki-config.yml" "$MON_DIR/loki/loki-config.yaml"
