@@ -35,10 +35,10 @@ done
 
 # Data Restoration
 echo "Checking S3 for existing backups"
-LATEST_BACKUP=$(aws s3 ls "s3://${S3_BUCKET}/" | sort | tail -n 1 | awk '{print $4}')
+LATEST_BACKUP=$(aws s3 ls "s3://${S3_BUCKET}/" | grep ".sql" | sort | tail -n 1 | awk '{print $4}')
 
 if [ -n "$LATEST_BACKUP" ]; then
-    echo "Backup found: $LATEST_BACKUP. Restoring..."
+    echo "Backup found: $LATEST_BACKUP. Restoring"
     
     # Download dump to tmp
     aws s3 cp "s3://${S3_BUCKET}/$LATEST_BACKUP" /tmp/restore_db.sql
