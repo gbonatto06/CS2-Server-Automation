@@ -207,7 +207,7 @@ resource "aws_instance" "cs2_server" {
   user_data = <<-EOF
     #!/bin/bash
     # Debug user-data logs
-    exec > >(tee /var/log/user-data-bootstrap.log|logger -t user-data -s 2>/dev/console) 2>&1
+    exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
     
     # Export Terraform Variables to Environment Variables
     export server_password="${var.cs2_server_password}"
