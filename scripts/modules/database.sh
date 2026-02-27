@@ -22,7 +22,7 @@ sudo docker run -d \
   -e MYSQL_DATABASE=cs2_server \
   -e MYSQL_USER=cs2_admin \
   -e MYSQL_PASSWORD="$DB_PASS" \
-  -p 3306:3306 \
+  -p 127.0.0.1:3306:3306 \
   -v /home/steam/mysql_data:/var/lib/mysql \
   mysql:8.0
 

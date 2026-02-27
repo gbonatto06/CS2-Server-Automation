@@ -34,7 +34,7 @@ services:
         condition: service_healthy
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.10.0
     network_mode: "host"
     volumes: 
       - "./prometheus/alert.rules.yaml:/etc/prometheus/alert.rules.yaml"
@@ -52,7 +52,7 @@ services:
       retries: 3
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.4.0
     network_mode: "host"
     volumes: ["./grafana/provisioning:/etc/grafana/provisioning"]
     environment:
@@ -69,13 +69,13 @@ services:
         condition: service_healthy
     
   node-exporter:
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.10.2
     network_mode: "host"
     pid: "host"
     restart: always
     
   blackbox-exporter:
-    image: prom/blackbox-exporter:latest
+    image: prom/blackbox-exporter:v0.28.0
     network_mode: "host"
     volumes: ["./blackbox.yaml:/config/blackbox.yaml"]
     command: --config.file=/config/blackbox.yaml

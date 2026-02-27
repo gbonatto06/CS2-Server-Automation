@@ -107,7 +107,8 @@ echo "Starting Docker Containers"
 # Fix permissions before starting
 # Ensure the 'steam' user and Docker containers can read/write to mapped volumes.
 # Permissions are set to 777 to avoid mapping issues with container internal users.
-sudo chmod -R 777 "$MON_DIR"
+sudo find "$MON_DIR" -type d -exec chmod 755 {} \;
+sudo find "$MON_DIR" -type f -exec chmod 644 {} \;
 
 # Launch the stack
 cd "$MON_DIR" && sudo docker compose up -d
