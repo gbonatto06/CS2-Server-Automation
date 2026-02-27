@@ -38,7 +38,13 @@ jobs:
 
       - name: TFLint
         uses: terraform-linters/setup-tflint@v4
-      - run: tflint --init && tflint --recursive
+      - run: |
+          tflint --init
+          for dir in . modules/*/; do
+            echo "::group::tflint $dir"
+            tflint --config "$(pwd)/.tflint.hcl" --chdir "$dir"
+            echo "::endgroup::"
+          done
 
   shellcheck:
     name: ShellCheck
