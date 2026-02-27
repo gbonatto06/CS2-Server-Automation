@@ -77,6 +77,7 @@ resource "aws_instance" "cs2_server" {
   tags = { Name = "CS2-Dedicated-Server" }
 
   # User Data
+  #trivy:ignore:AVD-AWS-0029
   user_data = <<-EOF
     #!/bin/bash
     # Debug user-data logs

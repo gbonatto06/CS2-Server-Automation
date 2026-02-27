@@ -18,7 +18,8 @@ date
 
 # Directory Detection
 # Determines the absolute path of where this script is located
-export INSTALL_SOURCE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+INSTALL_SOURCE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+export INSTALL_SOURCE_DIR
 echo "Detected Source Directory: $INSTALL_SOURCE_DIR"
 
 # Force navigation to the script directory to ensure relative module paths work
@@ -70,6 +71,7 @@ run_module() {
     
     if [ -f "$script_path" ]; then
         # 'source' runs the script in the current shell context, sharing variables.
+        # shellcheck source=/dev/null
         source "$script_path"
         
         # Capture the exit code of the last command in the sourced script

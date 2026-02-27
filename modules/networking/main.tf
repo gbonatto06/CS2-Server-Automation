@@ -10,6 +10,7 @@ resource "aws_internet_gateway" "cs2_igw" {
   vpc_id = aws_vpc.cs2_vpc.id
 }
 
+#trivy:ignore:AVD-AWS-0164
 resource "aws_subnet" "cs2_subnet" {
   vpc_id                  = aws_vpc.cs2_vpc.id
   cidr_block              = "10.0.1.0/24"

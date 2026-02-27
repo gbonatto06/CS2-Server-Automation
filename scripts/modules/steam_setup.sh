@@ -11,7 +11,7 @@ echo "Starting SteamCMD and CS2 Setup"
 # Download and Install SteamCMD
 echo "Downloading CS2 via SteamCMD"
 sudo -u steam mkdir -p "$USER_HOME/steamcmd"
-cd "$USER_HOME/steamcmd"
+cd "$USER_HOME/steamcmd" || exit 1
 
 # Download steamcmd and extract directly
 sudo -u steam curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | sudo -u steam tar zxvf -

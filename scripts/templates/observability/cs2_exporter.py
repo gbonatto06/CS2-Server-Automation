@@ -20,7 +20,7 @@ def fetch_metrics():
             cs2_players.set(info["player_count"])
             map_name = info.get("map_name", info.get("map", "Unknown"))
             cs2_map.info({'map_name': map_name})
-    except Exception as e:
+    except Exception:
         # If connection fails, set players to 0 and map to Offline
         cs2_up.set(0)
         cs2_players.set(0)
