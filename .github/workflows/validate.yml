@@ -1,0 +1,150 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-validate:
+    name: Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Cache providers
+        uses: actions/cache@v4
+        with:
+          path: .terraform/
+          key: terraform-${{ hashFiles('.terraform.lock.hcl') }}
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Init
+        run: terraform init -backend=false
+
+      - name: Validate
+        env:
+          TF_VAR_cs2_gslt_token: dummy
+          TF_VAR_db_password: dummy_pw_123
+        run: terraform validate
+
+      - name: TFLint
+        uses: terraform-linters/setup-tflint@v4
+      - run: tflint --init && tflint --recursive
+
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        run: find scripts/ -name "*.sh" -print0 | xargs -0 shellcheck --severity=warning
+
+  yaml-json-validate:
+    name: YAML & JSON
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml
+        working-directory: scripts/templates/observability
+        run: docker compose config --quiet
+
+      - name: Validate alert rules
+        run: |
+          PROMTOOL_VERSION=3.10.0
+          curl -sL "https://github.com/prometheus/prometheus/releases/download/v${PROMTOOL_VERSION}/prometheus-${PROMTOOL_VERSION}.linux-amd64.tar.gz" \
+            | tar xzf - --strip-components=1 "prometheus-${PROMTOOL_VERSION}.linux-amd64/promtool"
+          ./promtool check rules scripts/templates/observability/alert.rules.yaml
+
+      - name: Validate prometheus config
+        run: |
+          tmpdir=$(mktemp -d)
+          cp scripts/templates/observability/prometheus.yml "$tmpdir/"
+          cp scripts/templates/observability/alert.rules.yaml "$tmpdir/"
+          sed -i 's|/etc/prometheus/alert.rules.yaml|alert.rules.yaml|' "$tmpdir/prometheus.yml"
+          ./promtool check config "$tmpdir/prometheus.yml"
+
+      - name: Validate JSON files
+        run: |
+          jq empty scripts/dashboards/cs2_server.json
+          jq empty scripts/templates/plugins/PublicModes.json
+          jq empty scripts/templates/plugins/WeaponPaints.json
+
+  docker-image-tags:
+    name: Docker Image Tags
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check all image tags exist
+        run: |
+          chmod +x .github/scripts/check-docker-tags.sh
+          .github/scripts/check-docker-tags.sh scripts/templates/observability/docker-compose.yml
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy config scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 1
+
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check syntax
+        run: python3 -m py_compile scripts/templates/observability/cs2_exporter.py
+
+      - name: Ruff lint
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: check --select E9,F scripts/templates/observability/cs2_exporter.py
+
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs:
+      - terraform-validate
+      - shellcheck
+      - yaml-json-validate
+      - docker-image-tags
+      - security-scan
+      - python-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs passed
+        run: |
+          results=( \
+            "${{ needs.terraform-validate.result }}" \
+            "${{ needs.shellcheck.result }}" \
+            "${{ needs.yaml-json-validate.result }}" \
+            "${{ needs.docker-image-tags.result }}" \
+            "${{ needs.security-scan.result }}" \
+            "${{ needs.python-lint.result }}" \
+          )
+          for r in "${results[@]}"; do
+            if [[ "$r" != "success" ]]; then
+              echo "::error::One or more jobs failed: ${results[*]}"
+              exit 1
+            fi
+          done
+          echo "All jobs passed!"

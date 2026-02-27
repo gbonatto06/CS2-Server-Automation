@@ -22,9 +22,26 @@ resource "aws_iam_role" "ec2_s3_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "s3_access" {
-  role       = aws_iam_role.ec2_s3_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+resource "aws_iam_role_policy" "s3_scoped" {
+  name = "cs2-s3-scoped-access"
+  role = aws_iam_role.ec2_s3_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket"
+      ]
+      Resource = [
+        "arn:aws:s3:::${var.bucket_name}",
+        "arn:aws:s3:::${var.bucket_name}/*"
+      ]
+    }]
+  })
 }
 
 resource "aws_iam_instance_profile" "ec2_profile" {
@@ -33,6 +50,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 }
 
 # EC2 Instance
+#trivy:ignore:AVD-AWS-0028
 resource "aws_instance" "cs2_server" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
@@ -41,9 +59,19 @@ resource "aws_instance" "cs2_server" {
   key_name               = var.key_name
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
 
+  # IMDSv2: Requires token-based access to instance metadata (169.254.169.254),
+  # blocking SSRF attacks that could exfiltrate IAM credentials via simple GET requests.
+  # hop_limit=1 prevents Docker containers from reaching the metadata endpoint.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
   root_block_device {
     volume_size = 120
     volume_type = "gp3"
+    encrypted   = true
   }
 
   tags = { Name = "CS2-Dedicated-Server" }
@@ -106,6 +134,6 @@ resource "aws_instance" "cs2_server" {
   EOF
 
   depends_on = [
-    aws_iam_role_policy_attachment.s3_access
+    aws_iam_role_policy.s3_scoped
   ]
 }

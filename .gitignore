@@ -25,7 +25,6 @@
 # Temporary logs and lock files.
 # Logs temporários e arquivos de trava.
 *.log
-.terraform.lock.hcl
 
 # Build Artifacts / Artefatos de Build
 # ZIP files used for script deployment.

@@ -23,6 +23,7 @@ resource "aws_security_group" "cs2_sg" {
   }
 
   # CS2 Game Traffic - Public
+  #trivy:ignore:AVD-AWS-0107
   ingress {
     from_port   = 27015
     to_port     = 27015
@@ -59,6 +60,7 @@ resource "aws_security_group" "cs2_sg" {
   }
 
   # Egress - Open
+  #trivy:ignore:AVD-AWS-0104
   egress {
     from_port   = 0
     to_port     = 0
@@ -71,6 +73,7 @@ resource "aws_security_group" "cs2_sg" {
 }
 
 # SSH Keys Generation
+#trivy:ignore:AVD-AWS-0164
 resource "tls_private_key" "cs2_key" {
   algorithm = "RSA"
   rsa_bits  = 4096
