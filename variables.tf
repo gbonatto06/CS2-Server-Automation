@@ -20,7 +20,7 @@ variable "cs2_gslt_token" {
   description = "Steam Game Server Login Token. Get it at: https://steamcommunity.com/dev/managegameservers"
   type        = string
   sensitive   = true
-  
+
   # Basic validation to ensure the user didn't forget the variable
   validation {
     condition     = length(var.cs2_gslt_token) > 0
