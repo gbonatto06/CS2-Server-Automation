@@ -5,15 +5,15 @@
 ![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
 ![Grafana](https://img.shields.io/badge/grafana-%23F46800.svg?style=for-the-badge&logo=grafana&logoColor=white)
 ![CS2](https://img.shields.io/badge/Counter--Strike_2-FFA500?style=for-the-badge&logo=counter-strike&logoColor=white)
+[![CI](https://github.com/gbonatto06/CS2-Server-Automation/actions/workflows/validate.yml/badge.svg)](https://github.com/gbonatto06/CS2-Server-Automation/actions/workflows/validate.yml)
 
 <div align="center">
   <h3>
-    <a href="#-english">🇺🇸 English</a> | 
+    <a href="#-english">🇺🇸 English</a> |
     <a href="#-português">🇧🇷 Português</a>
   </h3>
 </div>
 
-** This project is currently under active development.**
 ---
 
 <div id="-english"></div>
