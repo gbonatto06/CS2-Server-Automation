@@ -120,11 +120,16 @@ Other usable commands belong to their respective plugins (MatchZy, WeaponPaints)
 
 ```text
 .
-├── main.tf                 # Main infrastructure definition: EC2, Security Groups, IAM, and S3
+├── main.tf                 # Module orchestrator: calls networking, security, storage, compute
 ├── variables.tf            # Variable declarations (Region, Instance Type, Passwords)
 ├── providers.tf            # AWS Provider configuration
 ├── outputs.tf              # Terraform Outputs (Displays Server IP at the end)
 ├── terraform.tfvars        # (GitIgnored) File where you insert your actual passwords and tokens
+├── modules/                # Terraform Modules
+│   ├── networking/         # VPC, Subnet, Internet Gateway, Route Table
+│   ├── security/           # Security Group, SSH Keys
+│   ├── storage/            # S3 Bucket, Scripts Upload
+│   └── compute/            # IAM Roles, EC2 Instance
 └── scripts/                # Automation Root
     ├── install_cs2.sh      # Orchestrator Script
     ├── dashboards/         # Grafana JSON Dashboard definitions
@@ -246,11 +251,16 @@ Os demais comandos utilizáveis pertencem aos respectivos plugins (MatchZy, Weap
 
 ```text
 .
-├── main.tf                 # Arquivo principal: Configurações da EC2, Security Groups, IAM e S3
+├── main.tf                 # Orquestrador de módulos: chama networking, security, storage, compute
 ├── variables.tf            # Declaração das variáveis (Região, Tipo de Instância, Senhas)
 ├── providers.tf            # Configuração do provedor AWS
 ├── outputs.tf              # Outputs do Terraform (Exibe o IP do servidor ao final)
 ├── terraform.tfvars        # (Ignorado) Arquivo onde você insere suas senhas reais
+├── modules/                # Módulos Terraform
+│   ├── networking/         # VPC, Subnet, Internet Gateway, Route Table
+│   ├── security/           # Security Group, Chaves SSH
+│   ├── storage/            # Bucket S3, Upload de Scripts
+│   └── compute/            # IAM Roles, Instância EC2
 └── scripts/                # Raiz da Automação
     ├── install_cs2.sh      # Script Orquestrador Mestre
     ├── dashboards/         # Definições de Dashboard JSON do Grafana
