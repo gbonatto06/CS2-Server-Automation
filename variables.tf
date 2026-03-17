@@ -5,9 +5,9 @@ variable "aws_region" {
 }
 
 variable "instance_type" {
-  description = "EC2 Instance Type. t3.medium or higher."
+  description = "EC2 Instance Type. c6i.xlarge or higher recommended for stable frame times."
   type        = string
-  default     = "t3.medium"
+  default     = "c6i.xlarge"
 }
 
 variable "project_name" {

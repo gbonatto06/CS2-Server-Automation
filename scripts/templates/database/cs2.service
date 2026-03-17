@@ -10,6 +10,12 @@ Group=steam
 Environment="HOME=/home/steam"
 WorkingDirectory=/home/steam/cs2_server/game/bin/linuxsteamrt64
 
+# CPU priority for stable frame times
+Nice=-15
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=50
+LimitMEMLOCK=infinity
+
 # The time limit to shutdown
 TimeoutStopSec=180
 
