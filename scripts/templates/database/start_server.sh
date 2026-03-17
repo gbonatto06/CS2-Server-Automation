@@ -23,4 +23,9 @@ export LD_LIBRARY_PATH=".:${LD_LIBRARY_PATH:-}"
   +log on \
   +sv_logflush 1 \
   +sv_logsdir logs \
+  +tv_enable 1 \
+  +tv_port 27020 \
+  +tv_name "GOTV" \
+  +tv_delay 30 \
+  +tv_maxclients 2 \
   > /home/steam/cs2_server/game/csgo/console.log 2>&1

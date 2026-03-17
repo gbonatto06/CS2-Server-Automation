@@ -41,6 +41,16 @@ resource "aws_security_group" "cs2_sg" {
     description = "RCON Access - Admin"
   }
 
+  # GOTV Spectator Traffic - Public
+  #trivy:ignore:AVD-AWS-0107
+  ingress {
+    from_port   = 27020
+    to_port     = 27020
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "GOTV Spectator Traffic (UDP) - Public"
+  }
+
   # Grafana - Admin Only
   ingress {
     from_port   = 3000
