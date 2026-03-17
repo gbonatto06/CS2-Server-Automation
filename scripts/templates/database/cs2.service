@@ -12,7 +12,7 @@ WorkingDirectory=/home/steam/cs2_server/game/bin/linuxsteamrt64
 
 # CPU priority for stable frame times
 Nice=-15
-CPUSchedulingPolicy=fifo
+CPUSchedulingPolicy=rr
 CPUSchedulingPriority=50
 LimitMEMLOCK=infinity
 
