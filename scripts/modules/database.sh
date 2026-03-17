@@ -18,8 +18,8 @@ echo "Starting MySQL Container"
 sudo docker run -d \
   --name cs2-mysql \
   --restart always \
-  --memory=256m \
-  --memory-swap=512m \
+  --memory=512m \
+  --memory-swap=1g \
   -e MYSQL_ROOT_PASSWORD="$DB_PASS" \
   -e MYSQL_DATABASE=cs2_server \
   -e MYSQL_USER=cs2_admin \
