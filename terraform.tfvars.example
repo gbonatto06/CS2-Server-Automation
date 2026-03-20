@@ -13,9 +13,9 @@
 # 🇧🇷 Região da AWS. Use a região mais perto possível. Exemplo: 'sa-east-1' para a menor latência se você estiver no Brasil.
 aws_region = "sa-east-1"
 
-# 🇺🇸 Instance Type. 't3.medium' is the minimum recommended for stable performance (CPU/RAM).
-# 🇧🇷 Tipo de Instância. 't3.medium' é o mínimo recomendado para uma performance estável (CPU/RAM).
-instance_type = "t3.medium"
+# 🇺🇸 Instance Type. c6i.xlarge or higher recommended for stable frame times.
+# 🇧🇷 Tipo de Instância. c6i.xlarge é recomendada para performance estável (CPU/RAM).
+instance_type = "c6i.xlarge"
 
 # 🇺🇸 Project Name. Used to tag resources in AWS Console (e.g., "cs2-server-production").
 # 🇧🇷 Nome do Projeto. Usado para etiquetar recursos no console da AWS (ex: "cs2-servidor-producao").
