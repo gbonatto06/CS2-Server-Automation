@@ -1,14 +1,14 @@
 [Unit]
 Description=Counter-Strike 2 Dedicated Server
 After=network-online.target docker.service
-Requires=docker.service
+Wants=docker.service
 
 [Service]
 Type=simple
 User=steam
 Group=steam
 Environment="HOME=/home/steam"
-WorkingDirectory=/home/steam/cs2_server/game/bin/linuxsteamrt64
+WorkingDirectory=/home/steam/cs2_server/game
 
 # CPU priority for stable frame times
 Nice=-15

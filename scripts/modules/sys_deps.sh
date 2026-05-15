@@ -13,7 +13,7 @@ echo "Updating repositories and installing packages"
 sudo apt-get update
 sudo apt-get install -y \
     lib32gcc-s1 lib32stdc++6 \
-    curl tar unzip wget jq \
+    curl tar unzip wget jq execstack\
     dotnet-runtime-8.0 \
     docker.io docker-compose-v2 \
     awscli \

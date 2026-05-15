@@ -49,6 +49,11 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_s3_role.name
 }
 
+resource "aws_iam_role_policy_attachment" "ssm_managed" {
+  role       = aws_iam_role.ec2_s3_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 # EC2 Instance
 #trivy:ignore:AVD-AWS-0028
 resource "aws_instance" "cs2_server" {
@@ -135,6 +140,7 @@ resource "aws_instance" "cs2_server" {
   EOF
 
   depends_on = [
-    aws_iam_role_policy.s3_scoped
+    aws_iam_role_policy.s3_scoped,
+    aws_iam_role_policy_attachment.ssm_managed
   ]
 }
