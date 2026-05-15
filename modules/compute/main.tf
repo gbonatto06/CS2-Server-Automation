@@ -74,7 +74,7 @@ resource "aws_instance" "cs2_server" {
   }
 
   root_block_device {
-    volume_size = 120
+    volume_size = 85
     volume_type = "gp3"
     encrypted   = true
   }
